@@ -2,6 +2,7 @@
 # Links this Mac's runner to Supabase and verifies it end to end.
 #
 #   ./connect-supabase.sh https://PROJECT.supabase.co ANON_KEY SERVICE_ROLE_KEY [you@email]
+#   ./connect-supabase.sh https://PROJECT.supabase.co - - you@email   # keys from the clipboard
 #
 # Optional: SUPABASE_ACCESS_TOKEN=sbp_... applies ../supabase.sql for you
 # (otherwise paste that file into the SQL editor first).
@@ -15,6 +16,26 @@ URL=${URL%/}
 ANON=${2:?missing anon key}
 SERVICE=${3:?missing service_role key (Project Settings -> API)}
 EMAIL=${4:-}
+
+# "-" means: take the key from the clipboard (Copy button in the dashboard),
+# so it never has to be pasted into a command line.
+from_clipboard() {
+  local name=$1 key
+  while true; do
+    printf '\nIn Supabase (Project Settings -> API keys), click Copy next to the %s key,\nthen press Enter here... ' "$name" >&2
+    read -r _
+    key=$(pbpaste | tr -d '[:space:]')
+    case "$key" in
+      eyJ*|sb_publishable_*|sb_secret_*) printf '   got the %s key (%s…)\n' "$name" "${key:0:6}" >&2; echo "$key"; return;;
+      *) printf '   the clipboard does not hold a Supabase key yet - try again\n' >&2;;
+    esac
+  done
+}
+[ "$ANON" = "-" ] && ANON=$(from_clipboard "anon (public)")
+[ "$SERVICE" = "-" ] && SERVICE=$(from_clipboard "service_role (secret)")
+[ "$ANON" = "$SERVICE" ] && { echo "Both keys are the same - copy the service_role key for the second one."; exit 1; }
+printf '' | pbcopy 2>/dev/null || true   # don't leave the secret on the clipboard
+
 for v in "$ANON" "$SERVICE"; do
   case "$v" in
     eyJ*|sb_publishable_*|sb_secret_*) ;;
