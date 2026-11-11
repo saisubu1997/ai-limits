@@ -49,6 +49,8 @@ create table if not exists public.runners (
   owner uuid default auth.uid(),
   seen_at double precision
 );
+-- Usage limits from the Mac widget (same JSON as ~/.limitswidget/data.json).
+alter table public.runners add column if not exists limits jsonb;
 
 -- Rows written before sign-in existed belong to the first account.
 update public.tasks set owner = (select id from auth.users order by created_at limit 1)

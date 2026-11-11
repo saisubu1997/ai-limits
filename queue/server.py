@@ -659,7 +659,23 @@ def heartbeat():
             apps[model] = os.path.exists(path)
     row = {"id": name, "name": name, "apps": apps, "seen_at": time.time()}
     row.update(owner_fields())
-    supabase_request("POST", "/rest/v1/runners?on_conflict=id", row)
+    limits = read_limits()
+    if limits is not None:
+        row["limits"] = limits
+    code, _ = supabase_request("POST", "/rest/v1/runners?on_conflict=id", row)
+    if code == 400 and "limits" in row:
+        # Schema without the limits column yet: keep the heartbeat alive.
+        row.pop("limits")
+        supabase_request("POST", "/rest/v1/runners?on_conflict=id", row)
+
+
+def read_limits():
+    """The limits widget's latest snapshot (written by fetch.py), for the phone."""
+    try:
+        with open(os.path.join(DATA_DIR, "data.json")) as fh:
+            return json.load(fh)
+    except Exception:
+        return None
 
 
 def sync_loop():

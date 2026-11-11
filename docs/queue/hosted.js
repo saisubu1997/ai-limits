@@ -169,27 +169,69 @@ function renderSessions() {
     }).join("") + "</div>").join("");
 }
 
+/* Limits, mirrored from the Mac widget (runners.limits = ~/.limitswidget/data.json). */
+function untilText(iso) {
+  if (!iso) return "";
+  const s = (Date.parse(iso) - Date.now()) / 1000;
+  if (!(s > 0)) return "resets soon";
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  return "resets in " + (d ? d + "d " + h + "h" : h ? h + "h " + m + "m" : m + "m");
+}
+function barColor(left) {
+  return left < 20 ? "var(--bad)" : left < 50 ? "var(--run)" : "var(--ok)";
+}
+function appStatus(p) {
+  const s = (p && p.status) || {};
+  if (!s.running) return { text: s.sessions > 0 ? s.sessions + " recent" : "Not open", v: "--faint" };
+  if (s.state === "working") return { text: "Working", v: "--ok" };
+  if (s.state === "waiting") return { text: "Waiting", v: "--run" };
+  return { text: "Running", v: "--ok" };
+}
+function metricHtml(m) {
+  const left = Math.max(0, Math.min(100, Number(m.remaining_pct) || 0));
+  const value = m.value_text || Math.round(left) + "% left";
+  const sub = [m.sublabel, m.detail_text || untilText(m.reset_at)].filter(Boolean).join(" · ");
+  const color = m.value_text ? "var(--run)" : barColor(left);
+  return '<div class="metric"><div class="mrow"><span>' + esc(m.label) + '</span><b style="color:' +
+    (m.value_text ? "var(--text)" : color) + '">' + esc(value) + "</b></div>" +
+    '<div class="bar"><i style="width:' + left + "%;background:" + color + '"></i></div>' +
+    (sub ? '<div class="msub">' + esc(sub) + "</div>" : "") + "</div>";
+}
+
 function renderApps() {
   const runner = macRunner();
+  const limits = runner && runner.limits && Array.isArray(runner.limits.providers) ? runner.limits : null;
   const cards = Object.entries(APPS).map(([id, a]) => {
-    const mine = state.tasks.filter((t) => t.model === id && t.action !== "open");
-    const running = mine.filter((t) => t.status === "running" || t.status === "queued").length;
+    const p = limits && limits.providers.find((x) => x.id === id);
     const missing = runner && runner.apps && runner.apps[id] === false;
-    const stats = missing ? "Not installed on Mac"
-      : (running ? running + " active · " : "") + mine.length + (mine.length === 1 ? " run" : " runs");
+    const st = appStatus(p);
+    const s = p && p.status;
+    const sub = s && s.running && s.session_name
+      ? '<div class="live">▸ ' + esc(s.session_name) + "</div>"
+      : '<div class="mode">' + esc((p && (p.vendor || p.name)) || (a.runs ? "Headless" : "Hand-off")) + "</div>";
+    let body;
+    if (missing) body = '<div class="msub">Not installed on your Mac</div>';
+    else if (!p) body = '<div class="msub">' + (limits ? "No limits reported" : "Limits appear once your Mac is linked") + "</div>";
+    else if (!p.ok && p.error) body = '<div class="msub">' + esc(p.error) + "</div>";
+    else body = (p.metrics || []).map(metricHtml).join("") || '<div class="msub">No limits reported</div>';
     return '<div class="appCard">' +
-      '<div style="display:flex;gap:12px;align-items:center">' + glyph(id) +
-      '<div><div class="name">' + a.label + '</div><div class="mode">' + (a.runs ? "Headless" : "Hand-off") + "</div></div></div>" +
-      '<div class="stats">' + stats + "</div>" +
-      '<div class="acts"><button class="btn go" data-new="' + id + '">New</button><button class="btn" data-open="' + id + '">Open</button></div>' +
+      '<div class="ahead">' + glyph(id) +
+      '<div class="aname"><div class="name">' + a.label +
+      (p && p.plan ? ' <span class="plan" style="--c:' + a.color + '">' + esc(p.plan) + "</span>" : "") +
+      "</div>" + sub + "</div>" +
+      (p ? '<span class="status" style="--sc:var(' + st.v + ')"><i></i>' + st.text + "</span>" : "") +
+      "</div>" + body +
+      '<div class="acts"><button class="btn go" data-new="' + id + '">New task</button><button class="btn" data-open="' + id + '">Open on Mac</button></div>' +
       "</div>";
   }).join("");
+  const stamp = limits && limits.generated_at
+    ? '<div class="fine" style="text-align:center">Limits updated ' + ago(Date.parse(limits.generated_at) / 1000) + " ago</div>" : "";
   const mac = runner
     ? '<div class="kv"><span>Mac</span><span>' + esc(runner.name || runner.id) + "</span></div>" +
       '<div class="kv"><span>Last seen</span><span>' + (macOnline() ? "online" : ago(runner.seen_at) + " ago") + "</span></div>"
     : '<div class="kv"><span>Mac</span><span>' + (state.hasRunners ? "not connected" : "status not synced") + "</span></div>";
   $("#view-apps").innerHTML =
-    '<div class="appGrid">' + cards + "</div>" +
+    '<div class="appGrid">' + cards + "</div>" + stamp +
     '<div class="group">Mac</div><div class="card">' + mac + "</div>" +
     '<div class="group">Account</div><div class="card">' +
     '<div class="kv"><span>Signed in as</span><span>' + esc(state.user && state.user.email) + "</span></div>" +
@@ -213,7 +255,7 @@ function renderMac() {
 function render() {
   renderFilters();
   renderMac();
-  $("#pageTitle").textContent = { runs: "Runs", sessions: "Sessions", apps: "Apps" }[state.tab];
+  $("#pageTitle").textContent = { runs: "Runs", sessions: "Sessions", apps: "Limits" }[state.tab];
   document.querySelectorAll(".tab").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === state.tab)));
   ["runs", "sessions", "apps"].forEach((v) => { $("#view-" + v).hidden = v !== state.tab; });
   if (state.tab === "runs") renderRuns();
