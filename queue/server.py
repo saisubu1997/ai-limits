@@ -37,6 +37,25 @@ MODELS = {
     "deepseek": {"label": "DeepSeek", "runnable": False},
 }
 
+# How to bring the matching Mac app forward.
+APPS = {
+    "claude": ("com.anthropic.claudefordesktop", "/Applications/Claude.app"),
+    "codex": ("com.openai.codex", "/Applications/ChatGPT.app"),
+    "antigravity": ("com.google.antigravity", "/Applications/Antigravity.app"),
+    "deepseek": ("com.deepseek.dsh", "/Applications/DeepSeek Harness.app"),
+}
+
+
+def open_app(model):
+    bundle, path = APPS.get(model, (None, None))
+    if bundle:
+        done = subprocess.run(["open", "-b", bundle], capture_output=True)
+        if done.returncode == 0:
+            return True
+    if path and os.path.exists(path):
+        return subprocess.run(["open", path], capture_output=True).returncode == 0
+    return False
+
 
 def token():
     try:
@@ -416,6 +435,11 @@ class Handler(BaseHTTPRequestHandler):
                 if key in body:
                     set_setting(key, (body.get(key) or "").strip())
             return self._send(200, json.dumps({"ok": True}))
+
+        if rest == "api/open":
+            model = body.get("model") or ""
+            ok = open_app(model) if model in APPS else False
+            return self._send(200 if ok else 502, json.dumps({"ok": ok, "model": model}))
 
         if rest.startswith("api/tasks/") and rest.endswith("/retry"):
             tid = rest.split("/")[2]

@@ -24,6 +24,11 @@ as the limits widget. Installable on iPhone (Share -> Add to Home Screen).
 
 Tasks are honest about this: a Manual card says so instead of pretending to run.
 
+**Open <App>.** Every card has an action that brings the matching Mac app forward
+(`open -b <bundle-id>`, falling back to the .app path). It is shown inline on Manual
+cards so you can hand the task straight over, and in the expanded actions on the rest.
+Tapping it from your phone opens the app **on the Mac**.
+
 ## Supabase sync (optional)
 
 Sync makes the queue visible across devices: queue a task on the phone, the Mac picks

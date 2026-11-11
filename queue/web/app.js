@@ -45,12 +45,16 @@ function render() {
     const s = STATE[t.status] || STATE.queued;
     const open = expanded.has(t.id);
     const out = open ? '<pre class="out">' + esc(t.output || "…") + "</pre>" : "";
+    const openBtn = '<button data-act="open" data-id="' + t.id + '" data-model="' + t.model + '">Open ' + esc(m.label) + "</button>";
     const actions = open
-      ? '<div class="cardActions">' +
+      ? '<div class="cardActions">' + openBtn +
         (t.status !== "running" ? '<button data-act="retry" data-id="' + t.id + '">Retry</button>' : "") +
         '<button data-act="delete" data-id="' + t.id + '">Delete</button>' +
         (t.session_ref ? '<button data-act="session" data-ref="' + esc(t.session_ref) + '">Session ' + esc(t.session_ref.slice(0, 8)) + "…</button>" : "") +
         "</div>"
+      : "";
+    const manualOpen = t.status === "manual"
+      ? '<div class="manualRow">' + openBtn.replace('class="', 'class="primarySmall ').replace("<button", '<button style="background:' + m.color + '22;color:' + m.color + ';border-color:' + m.color + '55"') + "</div>"
       : "";
     return (
       '<article class="card" data-id="' + t.id + '">' +
@@ -62,7 +66,7 @@ function render() {
         "</div>" +
         '<p class="meta">' + ago(t.updated_at) + " · " + duration(t) + "</p>" +
         '<p class="prompt">' + esc(t.prompt) + "</p>" +
-        out + actions +
+        manualOpen + out + actions +
       "</article>"
     );
   }).join("");
@@ -130,6 +134,16 @@ $("#list").addEventListener("click", async (e) => {
   if (act) {
     e.stopPropagation();
     const id = act.dataset.id;
+    if (act.dataset.act === "open") {
+      act.disabled = true;
+      const r = await fetch("api/open", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: act.dataset.model }),
+      });
+      act.textContent = r.ok ? "Opened ✓" : "App not found";
+      setTimeout(() => { act.disabled = false; act.textContent = "Open " + (MODELS[act.dataset.model]?.label || ""); }, 2000);
+      return;
+    }
     if (act.dataset.act === "retry") await fetch("api/tasks/" + id + "/retry", { method: "POST" });
     if (act.dataset.act === "delete") { await fetch("api/tasks/" + id, { method: "DELETE" }); expanded.delete(id); }
     await load();

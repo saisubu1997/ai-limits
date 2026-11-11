@@ -36,7 +36,9 @@ h1{font-size:22px;margin:0;letter-spacing:-.02em}
 pre.out{margin:9px 0 0;padding:9px 10px;border-radius:10px;background:rgba(0,0,0,.35);
   font:11px ui-monospace,SFMono-Regular,Menlo,monospace;color:#cfd3da;white-space:pre-wrap;
   max-height:220px;overflow:auto;border:.5px solid rgba(255,255,255,.06)}
-.cardActions{display:flex;gap:14px;margin-top:9px;font-size:10.5px}
+.cardActions{display:flex;gap:14px;margin-top:9px;font-size:10.5px;flex-wrap:wrap}
+.manualRow{margin-top:10px}
+.manualRow button{border:.5px solid;border-radius:10px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;background:none}
 .cardActions button{background:none;border:0;color:var(--dim);padding:0;cursor:pointer}
 .cardActions button:active{color:var(--text)}
 .composer{position:fixed;left:0;right:0;bottom:0;padding:10px 16px calc(14px + env(safe-area-inset-bottom));
