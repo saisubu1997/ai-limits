@@ -29,82 +29,46 @@ Tasks are honest about this: a Manual card says so instead of pretending to run.
 cards so you can hand the task straight over, and in the expanded actions on the rest.
 Tapping it from your phone opens the app **on the Mac**.
 
-## Supabase sync (optional)
+## Phone app (Supabase + GitHub Pages)
 
-Sync makes the queue visible across devices: queue a task on the phone, the Mac picks
-it up and runs it. Without it everything stays local in `~/.limitswidget/queue.db`.
+**https://saisubu1997.github.io/ai-limits/queue/** - open on your phone, then
+Share -> Add to Home Screen. It has three tabs:
 
-1. Create a project at [supabase.com](https://supabase.com) (free tier is enough).
-2. Open **SQL editor**, paste [`../supabase.sql`](../supabase.sql), run it.
-3. Connect from this Mac:
+* **Runs** - every task as a thread. Open one to watch the output stream in and
+  reply to continue the same Claude / ChatGPT (Codex) session.
+* **Sessions** - recent sessions from the Mac with their latest messages; reply to
+  continue any Claude or Codex session from the phone.
+* **Apps** - start a task for an app, or bring the app forward on the Mac.
 
-   ```bash
-   ./connect-supabase.sh https://YOUR-PROJECT.supabase.co YOUR_ANON_KEY
-   ```
+Antigravity and DeepSeek Harness have no headless CLI, so their tasks are a
+hand-off: the Mac opens the app and puts your prompt on the clipboard.
 
-   That saves the credentials, checks the table, queues a test task and waits until it
-   appears in Supabase. You can also paste the same values in the app's gear menu.
+Supabase is the backend (Auth, Postgres, Realtime). The page itself is served by
+GitHub Pages, because Supabase does not serve HTML from `*.supabase.co`: Storage
+returns it as `text/plain` and Edge Functions rewrite `text/html` to `text/plain`
+unless the project has a paid custom domain.
 
-4. On the phone, open the queue, gear, and enter the same URL + anon key. Tasks queued
-   on the phone are pulled by the Mac every 8 seconds and executed.
+### One-time setup
 
-**Security:** the bundled policy lets anyone holding the anon key read and write the
-table. That is fine for a private project, but do not publish the key, and tighten the
-RLS policy (or add Supabase auth) if the project is shared.
-
-## Hosting on Supabase (auth built in)
-
-> Storage serves `.html` as `text/plain` on purpose, so a Storage URL shows source.
-> For a `*.supabase.co` app URL use the Edge Function in `hosted/function/`:
-> `SUPABASE_ACCESS_TOKEN=sbp_... ./hosted/deploy-function.sh` -> `/functions/v1/sai-agents`.
-
-Supabase serves the app from Storage and provides the login.
-
-1. **SQL editor** -> run [`supabase.sql`](../supabase.sql). It creates `public.tasks`
-   and the public `app` bucket.
-2. **Publish:**
+1. Sign up in the phone app (confirm the email Supabase sends).
+2. Apply the schema: paste [`../supabase.sql`](../supabase.sql) into the SQL editor
+   and run it (or pass `SUPABASE_ACCESS_TOKEN` to the next step).
+3. Link this Mac:
 
    ```bash
-   ./host-supabase.sh https://YOUR-PROJECT.supabase.co YOUR_ANON_KEY YOUR_SERVICE_ROLE_KEY
+   ./connect-supabase.sh https://YOUR-PROJECT.supabase.co ANON_KEY SERVICE_ROLE_KEY you@email
    ```
 
-   The script inlines the CSS/JS/icons into one HTML file, bakes in the project URL and
-   anon key, uploads it, and prints the public URL:
-   `https://YOUR-PROJECT.supabase.co/storage/v1/object/public/app/sai-agents.html`
+   It checks the tables, finds your account, saves the keys on this Mac and waits
+   for the Mac heartbeat. The phone then shows **Mac online**.
 
-3. Open that URL (or add it to your iPhone home screen). Sign in with email/password or
-   a magic link. Tasks go straight to Postgres; the Mac runner picks them up.
+### Security
 
-Notes:
-* `service_role` is only used for the upload and never leaves your Mac. The anon key is
-  public by design and is embedded in the page.
-* Email confirmation is on by default: confirm the message before the first sign-in, or
-  turn it off under **Authentication -> Providers -> Email**.
-* Point the Mac app at the hosted build with
-  `echo https://YOUR-PROJECT.supabase.co/storage/v1/object/public/app/sai-agents.html > ~/.limitswidget/agents_app_url`.
-
-## Hosted copy (GitHub Pages)
-
-GitHub Pages serves a hosted build of the same UI:
-
-**https://saisubu1997.github.io/ai-limits/queue/**
-
-It talks to Supabase instead of the Mac, so it works anywhere. Flow:
-
-1. Open the page, paste your project **URL** and **anon key** (the setup card).
-2. **Create account** -> confirm the email (Supabase sends it) -> **Sign in**.
-3. Queue tasks on the phone; they land in `public.tasks` with `status='queued'`.
-4. The Mac, connected to the same project (`./connect-supabase.sh`), pulls them every
-   8 seconds, runs the CLI, and pushes the output back.
-5. "Open app" from the hosted UI writes a row with `action='open'`; the Mac executes it.
-
-Notes:
-
-* The anon key is public by design; the `service_role` key must never be pasted anywhere.
-* Email confirmation is on by default in new Supabase projects - confirm before signing in,
-  or turn it off in **Authentication -> Providers -> Email**.
-* The bundled RLS policy is permissive so the unauthenticated Mac runner can write. Tighten
-  it (and give the runner its own account) before sharing the project.
+* Row Level Security limits every row to the signed-in owner; the anon key that is
+  embedded in the public page can read or write nothing by itself.
+* The Mac uses the `service_role` key, stored only in `~/.limitswidget/queue.db`.
+* The Mac only runs tasks owned by the linked account. Still, turn off new sign-ups once your account
+  exists: **Authentication -> Providers -> Email -> Allow new users to sign up**.
 
 ## Requirements
 
@@ -117,7 +81,7 @@ Notes:
 ```
 server.py             task store (SQLite), runner, REST API, Supabase sync
 web/                  the PWA (installable, offline shell)
-connect-supabase.sh   one-shot Supabase setup + verification
+connect-supabase.sh   link the Mac to Supabase + verify
 ```
 
 Tasks live in `~/.limitswidget/queue.db`; delete a row from the UI or drop the file to reset.

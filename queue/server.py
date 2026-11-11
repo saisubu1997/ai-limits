@@ -278,13 +278,27 @@ def run_task(task_id):
     model = task["model"]
     meta = MODELS.get(model, {})
     if not meta.get("runnable"):
-        update(task_id, status="manual", exit_code=None,
-               output_append="This app has no headless CLI, so the widget cannot start it.\n"
-               "Open %s and paste the task there." % meta.get("label", model))
+        # No headless CLI: hand the prompt over instead of pretending to run it.
+        copied = False
+        try:
+            copied = subprocess.run(["pbcopy"], input=task["prompt"] or "", text=True,
+                                    timeout=5).returncode == 0
+        except Exception:
+            pass
+        opened = open_app(model)
+        label = meta.get("label", model)
+        if opened and copied:
+            note = "Opened %s on your Mac and copied the prompt - paste it there (Cmd+V)." % label
+        elif opened:
+            note = "Opened %s on your Mac. Paste the prompt there." % label
+        else:
+            note = "%s is not installed on this Mac." % label
+        update(task_id, status="manual", exit_code=None, output_append=note)
         return
 
     before = newest_session(model)
     update(task_id, status="running", output_append=None)
+    run_cwd = None
 
     env = dict(os.environ)
     env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin:" + env.get("PATH", "")
@@ -304,6 +318,8 @@ def run_task(task_id):
         resume_id = task["resume_id"] if "resume_id" in task.keys() else None
         if resume_id:
             cmd += ["--resume", resume_id]
+            # Claude looks sessions up per project, so resume from that folder.
+            run_cwd = claude_session_cwd(resume_id)
     else:
         if not os.path.exists(CODEX_BIN):
             update(task_id, status="failed", exit_code=-1,
@@ -315,7 +331,7 @@ def run_task(task_id):
         else:
             cmd = [CODEX_BIN, "exec", "--skip-git-repo-check", task["prompt"]]
 
-    cwd = get_setting("workdir") or HOME
+    cwd = run_cwd if run_cwd and os.path.isdir(run_cwd) else (get_setting("workdir") or HOME)
     try:
         proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True, bufsize=1)
@@ -337,6 +353,8 @@ def run_task(task_id):
 
     after = newest_session(model)
     ref = os.path.basename(after) if after and after != before else None
+    if not ref and resume_id:
+        ref = resume_id   # the run appended to the session it resumed
     update(task_id,
            status="done" if proc.returncode == 0 else "failed",
            exit_code=proc.returncode, session_ref=ref)
@@ -377,14 +395,18 @@ def enqueue(task_id):
     threading.Thread(target=job, daemon=True).start()
 
 # ---------------------------------------------------------------- Supabase
+# The Mac talks to Supabase with the service_role key when it has one (it never
+# leaves this Mac), so the table can be locked to signed-in users. Rows it
+# creates are stamped with the owner the phone signs in as.
 
 def supabase_configured():
-    return bool(get_setting("supabase_url") and get_setting("supabase_key"))
+    return bool(get_setting("supabase_url") and
+                (get_setting("supabase_service_key") or get_setting("supabase_key")))
 
 
 def supabase_request(method, path, body=None):
     url = get_setting("supabase_url").rstrip("/") + path
-    key = get_setting("supabase_key")
+    key = get_setting("supabase_service_key") or get_setting("supabase_key")
     headers = {"apikey": key, "Authorization": "Bearer " + key,
                "Content-Type": "application/json",
                # Without this PostgREST rejects the upsert with 409 and every
@@ -406,71 +428,251 @@ FIELDS = ("id", "title", "prompt", "model", "status", "output",
           "exit_code", "session_ref", "created_at", "updated_at")
 
 
+def owner_fields():
+    owner = get_setting("supabase_owner")
+    return {"owner": owner} if owner else {}
+
+
 def push_to_supabase(task):
     if not supabase_configured():
         return
     row = {k: task[k] for k in FIELDS}
+    row.update(owner_fields())
     supabase_request("POST", "/rest/v1/tasks?on_conflict=id", row)
+
+
+def record_open(con, tid, row):
+    ok = open_app(row.get("model") or "")
+    con.execute(
+        "INSERT OR REPLACE INTO tasks(id,title,prompt,model,status,output,created_at,updated_at) "
+        "VALUES(?,?,?,?,?,?,?,?)",
+        (tid, "Open " + str(row.get("model")), "", row.get("model") or "",
+         "done" if ok else "failed", "opened" if ok else "app not found",
+         row.get("created_at") or time.time(), time.time()))
+    con.commit()
 
 
 def pull_from_supabase():
     if not supabase_configured():
         return
-    status, rows = supabase_request("GET", "/rest/v1/tasks?select=*&limit=100")
+    owner = get_setting("supabase_owner")
+    if get_setting("supabase_service_key"):
+        # The service key bypasses RLS, so only ever run the linked account's tasks.
+        if not owner:
+            return
+        scope = "&owner=eq." + urllib.parse.quote(owner)
+    else:
+        scope = ""
+    status, rows = supabase_request(
+        "GET", "/rest/v1/tasks?select=*&order=created_at.desc&limit=100" + scope)
     if status != 200 or not isinstance(rows, list):
         return
     con = db()
-    local = {r["id"] for r in con.execute("SELECT id FROM tasks").fetchall()}
+    local = {r["id"]: r for r in con.execute(
+        "SELECT id,status,updated_at FROM tasks").fetchall()}
     fresh = []
+    pushes = []
     for row in rows:
         tid = row.get("id")
-        if not tid or tid in local:
+        if not tid:
+            continue
+        mine = local.get(tid)
+        if mine:
+            # "Run again" from the phone: the row went back to queued after it finished here.
+            if (row.get("status") == "queued" and mine["status"] in ("done", "failed", "manual")
+                    and float(row.get("updated_at") or 0) > float(mine["updated_at"] or 0)):
+                if (row.get("action") or "run") == "open":
+                    record_open(con, tid, row)
+                    pushes.append(tid)
+                    continue
+                con.execute("UPDATE tasks SET status='queued', output='', exit_code=NULL, "
+                            "updated_at=? WHERE id=?", (time.time(), tid))
+                fresh.append(tid)
             continue
         if (row.get("action") or "run") == "open":
-            # A command from the hosted app: bring an app forward, no prompt.
-            ok = open_app(row.get("model") or "")
-            con.execute(
-                "INSERT INTO tasks(id,title,prompt,model,status,output,created_at,updated_at) "
-                "VALUES(?,?,?,?,?,?,?,?)",
-                (tid, "Open " + str(row.get("model")), "", row.get("model") or "",
-                 "done" if ok else "failed", "opened" if ok else "app not found",
-                 row.get("created_at") or time.time(), time.time()))
-            con.commit()
-            local.add(tid)
-            con2 = db()
-            saved = con2.execute("SELECT * FROM tasks WHERE id=?", (tid,)).fetchone()
-            con2.close()
-            if saved:
-                push_to_supabase(saved)
+            # A command from the phone: bring an app forward, no prompt.
+            record_open(con, tid, row)
+            pushes.append(tid)
             continue
         con.execute(
             "INSERT INTO tasks(id,title,prompt,model,status,output,exit_code,"
-            "session_ref,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "session_ref,created_at,updated_at,resume_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (tid, row.get("title") or "", row.get("prompt") or "",
              row.get("model") or "codex", row.get("status") or "queued",
              row.get("output") or "", row.get("exit_code"),
              row.get("session_ref"), row.get("created_at") or time.time(),
-             row.get("updated_at") or time.time()))
-        local.add(tid)
-        fresh.append(tid)
+             row.get("updated_at") or time.time(), row.get("resume_id")))
+        if (row.get("status") or "queued") == "queued":
+            fresh.append(tid)
     con.commit()
+    for tid in pushes:
+        saved = con.execute("SELECT * FROM tasks WHERE id=?", (tid,)).fetchone()
+        if saved:
+            push_to_supabase(saved)
     con.close()
     for tid in fresh:
-        con = db()
-        row = con.execute("SELECT status FROM tasks WHERE id=?", (tid,)).fetchone()
-        con.close()
-        if row and row["status"] == "queued":
-            enqueue(tid)
+        enqueue(tid)
+
+
+# ----------------------------------------------------- sessions + heartbeat
+def claude_session_file(session_id):
+    import glob
+    hits = glob.glob(os.path.join(HOME, ".claude/projects/*/%s.jsonl" % session_id))
+    return hits[0] if hits else None
+
+
+def claude_session_cwd(session_id):
+    path = claude_session_file(session_id)
+    if not path:
+        return None
+    try:
+        with open(path, errors="replace") as fh:
+            for _ in range(200):
+                line = fh.readline()
+                if not line:
+                    break
+                if '"cwd"' in line:
+                    cwd = json.loads(line).get("cwd")
+                    if cwd:
+                        return cwd
+    except Exception:
+        pass
+    return None
+
+
+def _tail_lines(path, size=400000):
+    with open(path, "rb") as fh:
+        fh.seek(0, 2)
+        end = fh.tell()
+        fh.seek(max(0, end - size))
+        data = fh.read().decode("utf-8", "replace")
+    lines = data.splitlines()
+    return lines[1:] if end > size else lines
+
+
+def _clip(text, limit=1800):
+    text = (text or "").strip()
+    return text if len(text) <= limit else text[:limit].rstrip() + " …"
+
+
+def claude_preview(path, keep=10):
+    msgs, cwd, last_prompt = [], None, None
+    for line in _tail_lines(path):
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        cwd = rec.get("cwd") or cwd
+        if rec.get("lastPrompt"):
+            last_prompt = rec["lastPrompt"]
+        if rec.get("type") not in ("user", "assistant") or rec.get("isMeta"):
+            continue
+        content = (rec.get("message") or {}).get("content")
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            text = "\n".join(c.get("text", "") for c in content
+                             if isinstance(c, dict) and c.get("type") == "text")
+        else:
+            text = ""
+        text = text.strip()
+        if not text or text.startswith("<"):
+            continue
+        role = "user" if rec["type"] == "user" else "assistant"
+        if msgs and msgs[-1]["r"] == role == "assistant":
+            msgs[-1]["t"] = _clip(msgs[-1]["t"] + "\n\n" + text)
+        else:
+            msgs.append({"r": role, "t": _clip(text)})
+    msgs = msgs[-keep:]
+    if last_prompt and not any(m["r"] == "user" for m in msgs):
+        msgs.insert(0, {"r": "user", "t": _clip(last_prompt)})
+    return msgs, cwd
+
+
+def codex_preview(path, keep=10):
+    msgs, cwd = [], None
+    for line in _tail_lines(path):
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        p = rec.get("payload") or {}
+        cwd = p.get("cwd") or cwd
+        if rec.get("type") != "response_item" or p.get("type") != "message":
+            continue
+        role = p.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        text = "\n".join(c.get("text", "") for c in (p.get("content") or [])
+                         if isinstance(c, dict)).strip()
+        if not text or text.startswith("<"):
+            continue
+        msgs.append({"r": role, "t": _clip(text)})
+    return msgs[-keep:], cwd
+
+
+SESSION_STAMPS = {}
+
+
+def push_sessions():
+    import glob
+    rows = []
+    for s in claude_sessions(10):
+        path = claude_session_file(s["id"])
+        if not path or SESSION_STAMPS.get("claude:" + s["id"]) == s["updated_at"]:
+            continue
+        preview, cwd = claude_preview(path)
+        rows.append(("claude", s, preview, cwd, True))
+    for s in codex_sessions(10):
+        hits = glob.glob(os.path.join(HOME, ".codex/sessions/**/*%s.jsonl" % s["id"]), recursive=True)
+        if not hits or SESSION_STAMPS.get("codex:" + s["id"]) == s["updated_at"]:
+            continue
+        preview, cwd = codex_preview(hits[0])
+        rows.append(("codex", s, preview, cwd, True))
+    try:
+        for s in deepseek_sessions(8):
+            if SESSION_STAMPS.get("deepseek:" + s["id"]) != s["updated_at"]:
+                rows.append(("deepseek", s, [], None, False))
+    except Exception:
+        pass
+    if not rows:
+        return
+    body = []
+    for app, s, preview, cwd, resumable in rows:
+        item = {"id": "%s:%s" % (app, s["id"]), "app": app, "session_id": s["id"],
+                "title": s["title"], "cwd": cwd, "can_resume": resumable,
+                "preview": preview, "updated_at": s["updated_at"]}
+        item.update(owner_fields())
+        body.append(item)
+    code, _ = supabase_request("POST", "/rest/v1/sessions?on_conflict=id", body)
+    if code in (200, 201, 204):
+        for app, s, _p, _c, _r in rows:
+            SESSION_STAMPS["%s:%s" % (app, s["id"])] = s["updated_at"]
+
+
+def heartbeat():
+    import socket
+    name = socket.gethostname().replace(".local", "")
+    apps = {"claude": bool(claude_binary()), "codex": os.path.exists(CODEX_BIN)}
+    for model, (_bundle, path) in APPS.items():
+        if model not in apps:
+            apps[model] = os.path.exists(path)
+    row = {"id": name, "name": name, "apps": apps, "seen_at": time.time()}
+    row.update(owner_fields())
+    supabase_request("POST", "/rest/v1/runners?on_conflict=id", row)
 
 
 def sync_loop():
+    tick = 0
     while True:
-        try:
-            pull_from_supabase()
-        except Exception:
-            pass
+        for job in (pull_from_supabase, heartbeat) + ((push_sessions,) if tick % 4 == 0 else ()):
+            try:
+                if supabase_configured():
+                    job()
+            except Exception as exc:
+                sys.stderr.write("sync %s: %s\n" % (job.__name__, exc))
+        tick += 1
         time.sleep(8)
-
 
 
 def task_json(row):
@@ -585,7 +787,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, json.dumps({"id": tid}))
 
         if rest == "api/settings":
-            for key in ("supabase_url", "supabase_key", "workdir"):
+            for key in ("supabase_url", "supabase_key", "supabase_service_key",
+                        "supabase_owner", "workdir"):
                 if key in body:
                     set_setting(key, (body.get(key) or "").strip())
             return self._send(200, json.dumps({"ok": True}))

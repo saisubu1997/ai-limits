@@ -1,6 +1,12 @@
--- AI Limits Queue - Supabase schema (hosted app + Mac runner).
--- Run in the SQL editor, then connect the Mac and the hosted app to this project.
+-- Sai Agents - Supabase schema (phone app + Mac runner). Safe to re-run.
+-- Run it in the SQL editor, or let queue/connect-supabase.sh run it for you.
+--
+-- Security model
+--   * The phone signs in with Supabase Auth and only ever sees its own rows.
+--   * The anon key alone can read or write nothing (it is public in the page).
+--   * The Mac runner uses the service_role key, which stays on the Mac.
 
+-- ------------------------------------------------------------------ tasks
 create table if not exists public.tasks (
   id text primary key,
   title text,
@@ -15,18 +21,64 @@ create table if not exists public.tasks (
   created_at double precision,
   updated_at double precision
 );
+alter table public.tasks add column if not exists action text default 'run';
+alter table public.tasks add column if not exists owner uuid;
+alter table public.tasks add column if not exists resume_id text;
+alter table public.tasks alter column owner set default auth.uid();
 
-alter table public.tasks enable row level security;
+-- --------------------------------------------------------------- sessions
+-- Recent sessions of each app, pushed by the Mac (title + last messages).
+create table if not exists public.sessions (
+  id text primary key,            -- "<app>:<session id>"
+  app text not null,
+  session_id text not null,
+  title text,
+  cwd text,
+  can_resume boolean default false,
+  preview jsonb default '[]'::jsonb,
+  owner uuid default auth.uid(),
+  updated_at double precision
+);
 
--- Signed-in users see and edit their own rows; the Mac uses the anon key
--- without a user, so keep the permissive policy unless you give the runner
--- its own account. Tighten this once the runner is signed in.
+-- ---------------------------------------------------------------- runners
+-- Heartbeat so the phone can show whether the Mac is online.
+create table if not exists public.runners (
+  id text primary key,
+  name text,
+  apps jsonb default '{}'::jsonb,
+  owner uuid default auth.uid(),
+  seen_at double precision
+);
+
+-- Rows written before sign-in existed belong to the first account.
+update public.tasks set owner = (select id from auth.users order by created_at limit 1)
+where owner is null;
+
+-- -------------------------------------------------------------------- RLS
+alter table public.tasks    enable row level security;
+alter table public.sessions enable row level security;
+alter table public.runners  enable row level security;
+
 drop policy if exists "tasks_anon_all" on public.tasks;
-create policy "tasks_anon_all" on public.tasks for all
-  using (true) with check (true);
+drop policy if exists "tasks_own"      on public.tasks;
+drop policy if exists "sessions_own"   on public.sessions;
+drop policy if exists "runners_own"    on public.runners;
 
--- Static hosting for the app itself: a public bucket served over HTTPS.
--- Upload with host-supabase.sh (service_role key, never shipped to clients).
-insert into storage.buckets (id, name, public)
-values ('app', 'app', true)
-on conflict (id) do update set public = true;
+create policy "tasks_own" on public.tasks for all to authenticated
+  using (owner = auth.uid()) with check (owner = auth.uid());
+create policy "sessions_own" on public.sessions for all to authenticated
+  using (owner = auth.uid()) with check (owner = auth.uid());
+create policy "runners_own" on public.runners for select to authenticated
+  using (owner = auth.uid());
+
+-- --------------------------------------------------------------- realtime
+do $$
+declare t text;
+begin
+  foreach t in array array['tasks', 'sessions', 'runners'] loop
+    if not exists (select 1 from pg_publication_tables
+                   where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
+      execute format('alter publication supabase_realtime add table public.%I', t);
+    end if;
+  end loop;
+end $$;
