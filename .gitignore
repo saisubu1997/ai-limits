@@ -1,0 +1,18 @@
+# build output
+AILimits.app/
+dist/
+.build/
+*.zip
+
+# local runtime data (never commit: tokens, keys, usage)
+demo/web_token
+demo/cloudflared.log
+.runtime/
+
+# macOS
+.DS_Store
+._*
+
+# editors
+.vscode/
+.idea/
