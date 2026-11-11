@@ -4,8 +4,8 @@
 const APPS = {
   claude:      { label: "Claude",      letter: "C", color: "#d97757", runs: true,  how: "Runs on your Mac with Claude Code" },
   codex:       { label: "ChatGPT",     letter: "G", color: "#10a37f", runs: true,  how: "Runs on your Mac with the Codex CLI" },
-  antigravity: { label: "Antigravity", letter: "A", color: "#4f86f7", runs: false, how: "Opens Antigravity on your Mac with your prompt copied" },
-  deepseek:    { label: "DeepSeek",    letter: "D", color: "#6d5dfc", runs: false, how: "Opens DeepSeek Harness on your Mac with your prompt copied" },
+  antigravity: { label: "Antigravity", letter: "A", color: "#4f86f7", runs: true,  how: "Runs on your Mac with the Antigravity CLI (agy)" },
+  deepseek:    { label: "DeepSeek",    letter: "D", color: "#6d5dfc", runs: true,  how: "Runs on your Mac with DeepSeek Harness (your DeepSeek account)" },
 };
 const STATUS = {
   queued:  { text: "Queued",     v: "--faint" },
@@ -297,7 +297,7 @@ function renderSessions() {
   const list = state.sessions.filter((s) => state.filter === "all" || s.app === state.filter);
   if (!list.length) {
     el.innerHTML = emptyState('<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-5 4v-4.3A2.5 2.5 0 0 1 4 13.5z"/>',
-      "No sessions", "Recent Claude, ChatGPT and DeepSeek sessions on your Mac show up here.");
+      "No sessions", "Recent Claude, ChatGPT and DeepSeek sessions on your Mac show up here. Reply to any of them to continue it.");
     return;
   }
   const order = ["claude", "codex", "deepseek", "antigravity"];

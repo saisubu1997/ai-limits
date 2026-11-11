@@ -30,12 +30,45 @@ CLAUDE_BIN = os.path.join(
     HOME, "Library/Application Support/Claude/claude-code")
 CODEX_BIN = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex"
 
+DSH_BIN = "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh"
+AGY_BIN = os.path.join(HOME, ".gemini/bin/agy")
+
 MODELS = {
     "claude": {"label": "Claude", "runnable": True},
     "codex": {"label": "Codex", "runnable": True},
-    "antigravity": {"label": "Antigravity", "runnable": False},
-    "deepseek": {"label": "DeepSeek", "runnable": False},
+    "antigravity": {"label": "Antigravity", "runnable": True},
+    "deepseek": {"label": "DeepSeek", "runnable": True},
 }
+
+# dsh's headless profile ships with account sign-in switched off and defaults to
+# an API key. This overlay (passed with --patch, the user's profiles are left
+# alone) turns the desktop app's DeepSeek account sign-in back on.
+DSH_PATCH = """- id: authorization
+  name: "@deepseek-ai/dsh-authorization"
+  disabled: false
+- id: credentials
+  name: "@deepseek-ai/dsh-credentials-local"
+  disabled: false
+- id: deepseek-account
+  name: "@deepseek-ai/dsh-deepseek-account-platform"
+  disabled: false
+- id: agent-default-model
+  name: "@deepseek-ai/dsh-agent-default-model"
+  config:
+    provider: deepseek-account
+    model: deepseek-flash
+"""
+
+
+def dsh_patch_path():
+    path = os.path.join(DATA_DIR, "dsh-headless.patch.yml")
+    try:
+        if not os.path.exists(path) or open(path).read() != DSH_PATCH:
+            with open(path, "w") as fh:
+                fh.write(DSH_PATCH)
+    except Exception:
+        pass
+    return path
 
 # How to bring the matching Mac app forward.
 APPS = {
@@ -145,8 +178,11 @@ def claude_token():
 
 def newest_session(kind):
     patterns = {"claude": os.path.join(HOME, ".claude/projects/*/*.jsonl"),
-                "codex": os.path.join(HOME, ".codex/sessions/**/*.jsonl")}
+                "codex": os.path.join(HOME, ".codex/sessions/**/*.jsonl"),
+                "deepseek": os.path.join(HOME, ".dsh/sessions/*/session-*")}
     import glob
+    if kind not in patterns:
+        return None
     files = glob.glob(patterns[kind], recursive=True)
     return max(files, key=os.path.getmtime) if files else None
 
@@ -277,28 +313,16 @@ def run_task(task_id):
 
     model = task["model"]
     meta = MODELS.get(model, {})
-    if not meta.get("runnable"):
-        # No headless CLI: hand the prompt over instead of pretending to run it.
-        copied = False
-        try:
-            copied = subprocess.run(["pbcopy"], input=task["prompt"] or "", text=True,
-                                    timeout=5).returncode == 0
-        except Exception:
-            pass
-        opened = open_app(model)
-        label = meta.get("label", model)
-        if opened and copied:
-            note = "Opened %s on your Mac and copied the prompt - paste it there (Cmd+V)." % label
-        elif opened:
-            note = "Opened %s on your Mac. Paste the prompt there." % label
-        else:
-            note = "%s is not installed on this Mac." % label
-        update(task_id, status="manual", exit_code=None, output_append=note)
-        return
+    resume_id = (task["resume_id"] if "resume_id" in task.keys() else None) or None
+    prompt = task["prompt"] or ""
+
+    def fail(msg):
+        update(task_id, status="failed", exit_code=-1, output_append=msg)
 
     before = newest_session(model)
     update(task_id, status="running", output_append=None)
     run_cwd = None
+    as_json = False          # agy: one JSON result at the end instead of a text stream
 
     env = dict(os.environ)
     env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin:" + env.get("PATH", "")
@@ -306,42 +330,68 @@ def run_task(task_id):
         binary = claude_binary()
         token = claude_token()
         if not binary:
-            update(task_id, status="failed", exit_code=-1,
-                   output_append="Claude Code CLI not found - open Claude Desktop once so it installs its CLI.")
-            return
+            return fail("Claude Code CLI not found - open Claude Desktop once so it installs its CLI.")
         if not token:
-            update(task_id, status="failed", exit_code=-1,
-                   output_append="No Claude token: sign in to Claude Desktop, then restart the widget.")
-            return
+            return fail("No Claude token: sign in to Claude Desktop, then restart the widget.")
         env["CLAUDE_CODE_OAUTH_TOKEN"] = token
-        cmd = [binary, "-p", task["prompt"], "--output-format", "text"]
-        resume_id = task["resume_id"] if "resume_id" in task.keys() else None
+        cmd = [binary, "-p", prompt, "--output-format", "text"]
         if resume_id:
             cmd += ["--resume", resume_id]
             # Claude looks sessions up per project, so resume from that folder.
             run_cwd = claude_session_cwd(resume_id)
-    else:
+    elif model == "codex":
         if not os.path.exists(CODEX_BIN):
-            update(task_id, status="failed", exit_code=-1,
-                   output_append="Codex CLI not found at %s" % CODEX_BIN)
-            return
-        resume_id = task["resume_id"] if "resume_id" in task.keys() else None
+            return fail("Codex CLI not found - install the ChatGPT app.")
         if resume_id:
-            cmd = [CODEX_BIN, "exec", "--skip-git-repo-check", "resume", resume_id, task["prompt"]]
+            cmd = [CODEX_BIN, "exec", "--skip-git-repo-check", "resume", resume_id, prompt]
         else:
-            cmd = [CODEX_BIN, "exec", "--skip-git-repo-check", task["prompt"]]
+            cmd = [CODEX_BIN, "exec", "--skip-git-repo-check", prompt]
+    elif model == "deepseek":
+        if not os.path.exists(DSH_BIN):
+            return fail("DeepSeek Harness is not installed on this Mac.")
+        cmd = [DSH_BIN, "--profile", "headless", "--patch", dsh_patch_path(),
+               "--approval-policy", "never"]
+        if resume_id:
+            sid = resume_id if resume_id.startswith("session-") else "session-" + resume_id
+            cmd += ["--session-id", sid]
+            run_cwd = deepseek_session_cwd(sid)
+        cmd.append(prompt)
+    elif model == "antigravity":
+        if not os.path.exists(AGY_BIN):
+            return fail("Antigravity CLI not found - open Antigravity once so it installs agy.")
+        cmd = [AGY_BIN, "-p", prompt, "--output-format", "json", "--print-timeout", "900s"]
+        if resume_id:
+            cmd += ["--conversation", resume_id]
+        as_json = True
+    else:
+        return fail("Unknown app: %s" % model)
 
     cwd = run_cwd if run_cwd and os.path.isdir(run_cwd) else (get_setting("workdir") or HOME)
+    # Codex/Claude log progress on stderr usefully; dsh and agy only print noise there.
+    quiet = model in ("deepseek", "antigravity")
     try:
-        proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True, bufsize=1)
+        proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE if quiet else subprocess.STDOUT,
+                                text=True, bufsize=1)
     except Exception as exc:
-        update(task_id, status="failed", exit_code=-1, output_append=str(exc))
-        return
+        return fail(str(exc))
+
+    err_lines = []
+    if quiet:
+        def drain():
+            for line in proc.stderr:
+                err_lines.append(line)
+                del err_lines[:-40]
+        threading.Thread(target=drain, daemon=True).start()
 
     started = time.time()
     buffer = []
+    collected = []
     for line in proc.stdout:
+        if as_json:
+            collected.append(line)
+            continue
         buffer.append(line)
         if len(buffer) >= 8 or time.time() - started > 1.5:
             update(task_id, output_append="".join(buffer))
@@ -351,13 +401,45 @@ def run_task(task_id):
     if buffer:
         update(task_id, output_append="".join(buffer))
 
-    after = newest_session(model)
-    ref = os.path.basename(after) if after and after != before else None
+    ref = None
+    ok = proc.returncode == 0
+    if as_json:
+        raw = "".join(collected).strip()
+        try:
+            result = json.loads(raw.splitlines()[-1]) if raw else {}
+        except Exception:
+            result = {}
+        text = (result.get("response") or "").strip()
+        ref = result.get("conversation_id")
+        if result.get("status") and result.get("status") != "SUCCESS":
+            ok = False
+        if text:
+            update(task_id, output_append=text + "\n")
+        elif raw and not result:
+            update(task_id, output_append=raw[-4000:])
+    if not ok and quiet and err_lines:
+        tail = "".join(err_lines[-8:]).strip()
+        if tail:
+            update(task_id, output_append="\n" + tail)
+
+    if not ref:
+        after = newest_session(model)
+        ref = os.path.basename(after) if after and after != before else None
     if not ref and resume_id:
         ref = resume_id   # the run appended to the session it resumed
-    update(task_id,
-           status="done" if proc.returncode == 0 else "failed",
-           exit_code=proc.returncode, session_ref=ref)
+    update(task_id, status="done" if ok else "failed",
+           exit_code=proc.returncode if not ok or proc.returncode else 0, session_ref=ref)
+
+
+def deepseek_session_cwd(sid):
+    """dsh keys sessions by working folder (/a/b -> --a-b--); resume from there."""
+    import glob
+    hits = glob.glob(os.path.join(HOME, ".dsh/sessions/*/" + sid))
+    if not hits:
+        return None
+    slug = os.path.basename(os.path.dirname(hits[0]))
+    path = "/" + slug.strip("-").replace("-", "/")
+    return path if os.path.isdir(path) else None
 
 
 def update(task_id, status=None, exit_code=None, output_append=None, session_ref=None):
@@ -611,6 +693,41 @@ def codex_preview(path, keep=10):
     return msgs[-keep:], cwd
 
 
+def deepseek_preview(session_dir, keep=10):
+    """Last messages of a DeepSeek Harness session (zstd JSONL transcript)."""
+    try:
+        import zstandard as zstd
+        with open(os.path.join(session_dir, "session.v4.jsonl.zstd"), "rb") as fh:
+            raw = zstd.ZstdDecompressor().stream_reader(fh).read().decode("utf-8", "replace")
+    except Exception:
+        return []
+    msgs = []
+    for line in raw.splitlines():
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        kind = rec.get("type")
+        data = rec.get("data") or {}
+        if kind == "user/message" and (data.get("source") or {}).get("kind") == "user":
+            parts = data.get("content") or []
+            role = "user"
+        elif kind == "assistant/message":
+            parts = (data.get("message") or {}).get("content") or []
+            role = "assistant"
+        else:
+            continue
+        text = "\n".join(c.get("text", "") for c in parts
+                         if isinstance(c, dict) and c.get("type") == "text").strip()
+        if not text:
+            continue
+        if msgs and msgs[-1]["r"] == role == "assistant":
+            msgs[-1]["t"] = _clip(msgs[-1]["t"] + "\n\n" + text)
+        else:
+            msgs.append({"r": role, "t": _clip(text)})
+    return msgs[-keep:]
+
+
 SESSION_STAMPS = {}
 
 
@@ -632,7 +749,10 @@ def push_sessions():
     try:
         for s in deepseek_sessions(8):
             if SESSION_STAMPS.get("deepseek:" + s["id"]) != s["updated_at"]:
-                rows.append(("deepseek", s, [], None, False))
+                sid = "session-" + s["id"]
+                hits = glob.glob(os.path.join(HOME, ".dsh/sessions/*/" + sid))
+                preview = deepseek_preview(hits[0]) if hits else []
+                rows.append(("deepseek", s, preview, deepseek_session_cwd(sid), True))
     except Exception:
         pass
     if not rows:
