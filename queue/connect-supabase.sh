@@ -15,6 +15,14 @@ URL=${URL%/}
 ANON=${2:?missing anon key}
 SERVICE=${3:?missing service_role key (Project Settings -> API)}
 EMAIL=${4:-}
+for v in "$ANON" "$SERVICE"; do
+  case "$v" in
+    eyJ*|sb_publishable_*|sb_secret_*) ;;
+    *) echo "'$v' is not a Supabase key. Copy the real anon and service_role keys from"
+       echo "Project Settings -> API (they start with eyJ, sb_publishable_ or sb_secret_)."; exit 1;;
+  esac
+done
+case "$EMAIL" in your@email|you@email*) echo "Replace your@email with the email you signed up with in the app."; exit 1;; esac
 REF=$(echo "$URL" | sed -E 's#https://([^.]+)\..*#\1#')
 
 TOKEN=$(cat "$HOME/.limitswidget/web_token" 2>/dev/null || true)
@@ -35,7 +43,11 @@ fi
 echo "== checking schema"
 for t in tasks sessions runners; do
   CODE=$(sb -o /dev/null -w "%{http_code}" "$URL/rest/v1/$t?select=id&limit=1")
-  [ "$CODE" = "200" ] || { echo "   table $t: HTTP $CODE - run ../supabase.sql in the SQL editor first"; exit 1; }
+  case "$CODE" in
+    200) ;;
+    401|403) echo "   Supabase rejected the service_role key (HTTP $CODE) - copy it again from Project Settings -> API"; exit 1;;
+    *) echo "   table $t: HTTP $CODE - run ../supabase.sql in the SQL editor first"; exit 1;;
+  esac
 done
 echo "   tasks, sessions, runners ok"
 
