@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#08080c">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<title>Queue</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="logo"></span>
+    <div><h1>Queue</h1><p id="sub">hosted</p></div>
+  </div>
+  <button id="signOut" class="ghost" hidden aria-label="Sign out">⏏</button>
+</header>
+
+<section id="setup" class="authCard" hidden>
+  <h2>Connect Supabase</h2>
+  <p class="hint">Project Settings → API. The anon key is public; never paste the service_role key.</p>
+  <label>Project URL<input id="cfgUrl" placeholder="https://abcd.supabase.co"></label>
+  <label>Anon key<input id="cfgKey" placeholder="eyJhbGciOi…"></label>
+  <button id="saveCfg" class="primary">Save</button>
+</section>
+
+<section id="auth" class="authCard" hidden>
+  <h2>Sign in</h2>
+  <label>Email<input id="email" type="email" autocomplete="username"></label>
+  <label>Password<input id="password" type="password" autocomplete="current-password"></label>
+  <button id="signIn" class="primary">Sign in</button>
+  <button id="signUp" class="ghostLink">Create account</button>
+  <p id="authState" class="hint"></p>
+</section>
+
+<main id="list" class="list" hidden></main>
+
+<form id="composer" class="composer" autocomplete="off" hidden>
+  <div class="chips" id="chips"></div>
+  <div class="inputRow">
+    <textarea id="prompt" rows="1" placeholder="Describe the task…" enterkeyhint="send"></textarea>
+    <button id="send" type="submit" aria-label="Queue task">↑</button>
+  </div>
+</form>
+
+<script src="hosted.js"></script>
+</body>
+</html>

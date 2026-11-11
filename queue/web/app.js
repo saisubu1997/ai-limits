@@ -118,10 +118,16 @@ $("#composer").addEventListener("submit", async (e) => {
     await fetch("api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: text, model }),
+      body: JSON.stringify({
+        prompt: text,
+        model: continueTarget ? continueTarget.app : model,
+        session_id: continueTarget ? continueTarget.id : undefined,
+      }),
     });
     promptEl.value = "";
     promptEl.style.height = "auto";
+    continueTarget = null;
+    updateTarget();
     await load();
     window.scrollTo({ top: 0, behavior: "smooth" });
   } finally {
@@ -174,6 +180,125 @@ $("#saveSettings").onclick = async () => {
   $("#saveState").textContent = "Saved.";
   setTimeout(() => { $("#sheet").hidden = true; $("#saveState").textContent = ""; }, 700);
 };
+
+
+// ---- app launcher + session manager ----
+let sessionsData = {};
+let canResume = {};
+let continueTarget = null;
+
+function renderApps() {
+  const el = document.getElementById("apps");
+  if (!el) return;
+  el.innerHTML = Object.entries(MODELS).map(function (pair) {
+    const id = pair[0], m = pair[1];
+    return '<button class="appBtn" data-app="' + id + '" style="--c:' + m.color + '">' +
+      '<span class="appDot"></span>' + m.label + "</button>";
+  }).join("");
+}
+
+async function openApp(app) {
+  try {
+    const r = await fetch("api/open", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: app }),
+    });
+    if (!r.ok) { alert("App not found on the Mac"); }
+  } catch (e) { alert("Could not reach the Mac"); }
+}
+
+function switchTab(name) {
+  document.querySelectorAll(".tab").forEach(function (t) {
+    t.setAttribute("aria-selected", String(t.dataset.tab === name));
+  });
+  document.getElementById("list").hidden = name !== "tasks";
+  document.getElementById("sessions").hidden = name !== "sessions";
+  if (name === "sessions") loadSessions();
+}
+
+async function loadSessions() {
+  const box = document.getElementById("sessions");
+  box.innerHTML = '<div class="empty">Loading sessions…</div>';
+  try {
+    const r = await fetch("api/sessions", { cache: "no-store" });
+    const d = await r.json();
+    sessionsData = d.sessions || {};
+    canResume = d.can_resume || {};
+    renderSessions();
+  } catch (e) {
+    box.innerHTML = '<div class="empty">Cannot reach the Mac</div>';
+  }
+}
+
+function renderSessions() {
+  const box = document.getElementById("sessions");
+  const order = ["claude", "codex", "deepseek", "antigravity"];
+  let html = "";
+  order.forEach(function (app) {
+    const list = sessionsData[app] || [];
+    const m = MODELS[app] || { label: app, color: "#8e8e93" };
+    html += '<div class="groupLabel">' + m.label + " · " + list.length + "</div>";
+    if (!list.length) {
+      html += '<div class="sess"><div class="sessMeta">No sessions found' +
+        (app === "antigravity" ? " (this app keeps no readable session list)" : "") + "</div></div>";
+      return;
+    }
+    list.forEach(function (s) {
+      const resume = canResume[app]
+        ? '<button data-act="continue" data-app="' + app + '" data-id="' + s.id +
+          '" data-title="' + encodeURIComponent(s.title) + '">Continue</button>'
+        : "";
+      html += '<article class="sess">' +
+        '<div class="sessHead"><span class="dot" style="background:' + m.color + '"></span>' +
+        '<span class="sessTitle">' + esc(s.title) + "</span>" +
+        '<span class="model" style="color:' + m.color + ";background:" + m.color + '2b">' +
+        m.label.toUpperCase() + "</span></div>" +
+        '<div class="sessMeta">' + ago(s.updated_at) + " · " + s.id.slice(0, 8) + "…</div>" +
+        '<div class="sessActions"><button data-act="openapp" data-app="' + app + '">Open ' +
+        m.label + "</button>" + resume + "</div></article>";
+    });
+  });
+  box.innerHTML = html;
+}
+
+function startContinue(app, id, title) {
+  continueTarget = { app: app, id: id, title: title };
+  model = app;
+  localStorage.setItem("queue.model", model);
+  buildChips();
+  switchTab("tasks");
+  updateTarget();
+  document.getElementById("prompt").focus();
+}
+
+function updateTarget() {
+  const bar = document.getElementById("target");
+  if (!bar) return;
+  bar.hidden = !continueTarget;
+  if (continueTarget) {
+    document.getElementById("targetLabel").textContent =
+      "Continuing " + (MODELS[continueTarget.app] || {}).label + ": " + continueTarget.title;
+  }
+}
+
+document.addEventListener("click", function (e) {
+  const appBtn = e.target.closest(".appBtn");
+  if (appBtn) { openApp(appBtn.dataset.app); return; }
+  const tab = e.target.closest(".tab");
+  if (tab) { switchTab(tab.dataset.tab); return; }
+  const act = e.target.closest("[data-act]");
+  if (!act) return;
+  if (act.dataset.act === "openapp") { openApp(act.dataset.app); return; }
+  if (act.dataset.act === "continue") {
+    startContinue(act.dataset.app, act.dataset.id, decodeURIComponent(act.dataset.title));
+  }
+});
+
+const clearTargetBtn = document.getElementById("clearTarget");
+if (clearTargetBtn) clearTargetBtn.onclick = function () { continueTarget = null; updateTarget(); };
+
+renderApps();
+updateTarget();
 
 buildChips();
 load();

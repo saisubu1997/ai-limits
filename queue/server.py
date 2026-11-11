@@ -86,6 +86,10 @@ def db():
         created_at REAL, updated_at REAL, remote_id TEXT)""")
     con.execute("""CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY, value TEXT)""")
+    try:
+        con.execute("ALTER TABLE tasks ADD COLUMN resume_id TEXT")
+    except Exception:
+        pass
     return con
 
 
@@ -147,6 +151,123 @@ def newest_session(kind):
     return max(files, key=os.path.getmtime) if files else None
 
 
+
+# ---------------------------------------------------------------- sessions
+
+def norm_time(ts):
+    return float(ts or 0)
+
+
+def claude_sessions(limit=12):
+    import glob
+    files = sorted(glob.glob(os.path.join(HOME, '.claude/projects/*/*.jsonl')),
+                   key=os.path.getmtime, reverse=True)[:limit]
+    out = []
+    for path in files:
+        title = None
+        try:
+            size = os.path.getsize(path)
+            with open(path, 'rb') as fh:
+                fh.seek(max(0, size - 40000))
+                tail = fh.read().decode('utf-8', 'replace')
+            for line in reversed(tail.splitlines()):
+                if '"lastPrompt"' in line:
+                    rec = json.loads(line)
+                    title = (rec.get('lastPrompt') or '').strip()[:70]
+                    break
+        except Exception:
+            pass
+        out.append({'id': os.path.basename(path)[:-6], 'app': 'claude',
+                    'title': title or 'Claude session',
+                    'updated_at': os.path.getmtime(path)})
+    return out
+
+
+def codex_sessions(limit=12):
+    import glob
+    names = {}
+    try:
+        with open(os.path.join(HOME, '.codex/session_index.jsonl')) as fh:
+            for line in fh:
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                names[rec.get('id')] = rec.get('thread_name')
+    except Exception:
+        pass
+    files = sorted(glob.glob(os.path.join(HOME, '.codex/sessions/**/*.jsonl'), recursive=True),
+                   key=os.path.getmtime, reverse=True)[:limit]
+    out = []
+    import re as _re
+    for path in files:
+        m = _re.search(r'([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})',
+                      os.path.basename(path))
+        if not m:
+            continue
+        sid = m.group(1)
+        title = names.get(sid)
+        if not title:
+            title = first_codex_prompt(path)
+        out.append({'id': sid, 'app': 'codex',
+                    'title': title or 'Codex thread',
+                    'updated_at': os.path.getmtime(path)})
+    return out
+
+
+def first_codex_prompt(path):
+    """Fallback title: the first user message in the rollout."""
+    try:
+        with open(path, errors='replace') as fh:
+            for _ in range(400):
+                line = fh.readline()
+                if not line:
+                    break
+                if 'user_message' not in line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                payload = rec.get('payload') or {}
+                text = payload.get('message') or payload.get('text') or ''
+                text = ' '.join(str(text).split())
+                if text:
+                    return text[:70]
+    except Exception:
+        pass
+    return None
+
+
+def deepseek_sessions(limit=8):
+    import glob
+    dirs = sorted(glob.glob(os.path.join(HOME, '.dsh/sessions/*/session-*')),
+                  key=os.path.getmtime, reverse=True)[:limit]
+    out = []
+    for path in dirs:
+        title = None
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            import fetch as f
+            title = f.deepseek_session_title(path)
+        except Exception:
+            title = None
+        out.append({'id': os.path.basename(path).replace('session-', ''), 'app': 'deepseek',
+                    'title': title or 'DeepSeek session',
+                    'updated_at': os.path.getmtime(path)})
+    return out
+
+
+def all_sessions():
+    groups = {'claude': [], 'codex': [], 'deepseek': [], 'antigravity': []}
+    for name, fn in (('claude', claude_sessions), ('codex', codex_sessions),
+                     ('deepseek', deepseek_sessions)):
+        try:
+            groups[name] = fn()
+        except Exception:
+            groups[name] = []
+    return groups
+
 def run_task(task_id):
     con = db()
     task = con.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
@@ -180,12 +301,19 @@ def run_task(task_id):
             return
         env["CLAUDE_CODE_OAUTH_TOKEN"] = token
         cmd = [binary, "-p", task["prompt"], "--output-format", "text"]
+        resume_id = task["resume_id"] if "resume_id" in task.keys() else None
+        if resume_id:
+            cmd += ["--resume", resume_id]
     else:
         if not os.path.exists(CODEX_BIN):
             update(task_id, status="failed", exit_code=-1,
                    output_append="Codex CLI not found at %s" % CODEX_BIN)
             return
-        cmd = [CODEX_BIN, "exec", "--skip-git-repo-check", task["prompt"]]
+        resume_id = task["resume_id"] if "resume_id" in task.keys() else None
+        if resume_id:
+            cmd = [CODEX_BIN, "exec", "--skip-git-repo-check", "resume", resume_id, task["prompt"]]
+        else:
+            cmd = [CODEX_BIN, "exec", "--skip-git-repo-check", task["prompt"]]
 
     cwd = get_setting("workdir") or HOME
     try:
@@ -295,6 +423,23 @@ def pull_from_supabase():
         tid = row.get("id")
         if not tid or tid in local:
             continue
+        if (row.get("action") or "run") == "open":
+            # A command from the hosted app: bring an app forward, no prompt.
+            ok = open_app(row.get("model") or "")
+            con.execute(
+                "INSERT INTO tasks(id,title,prompt,model,status,output,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?)",
+                (tid, "Open " + str(row.get("model")), "", row.get("model") or "",
+                 "done" if ok else "failed", "opened" if ok else "app not found",
+                 row.get("created_at") or time.time(), time.time()))
+            con.commit()
+            local.add(tid)
+            con2 = db()
+            saved = con2.execute("SELECT * FROM tasks WHERE id=?", (tid,)).fetchone()
+            con2.close()
+            if saved:
+                push_to_supabase(saved)
+            continue
         con.execute(
             "INSERT INTO tasks(id,title,prompt,model,status,output,exit_code,"
             "session_ref,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
@@ -372,6 +517,11 @@ class Handler(BaseHTTPRequestHandler):
             rows = con.execute("SELECT * FROM tasks ORDER BY created_at DESC LIMIT 200").fetchall()
             con.close()
             return self._send(200, json.dumps({"tasks": [task_json(r) for r in rows]}))
+        if rest == "api/sessions":
+            return self._send(200, json.dumps({
+                "sessions": all_sessions(),
+                "can_resume": {"claude": True, "codex": True,
+                               "deepseek": False, "antigravity": False}}))
         if rest == "api/settings":
             return self._send(200, json.dumps({
                 "supabase_url": get_setting("supabase_url", ""),
@@ -422,9 +572,10 @@ class Handler(BaseHTTPRequestHandler):
             title = (body.get("title") or prompt.splitlines()[0])[:90]
             now = time.time()
             con = db()
-            con.execute("INSERT INTO tasks(id,title,prompt,model,status,output,created_at,updated_at) "
-                        "VALUES(?,?,?,?,?,?,?,?)",
-                        (tid, title, prompt, model, "queued", "", now, now))
+            resume_id = (body.get("session_id") or "").strip() or None
+            con.execute("INSERT INTO tasks(id,title,prompt,model,status,output,created_at,updated_at,resume_id) "
+                        "VALUES(?,?,?,?,?,?,?,?,?)",
+                        (tid, title, prompt, model, "queued", "", now, now, resume_id))
             con.commit()
             con.close()
             enqueue(tid)

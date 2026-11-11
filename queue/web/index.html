@@ -23,9 +23,21 @@
   <button id="gear" class="ghost" aria-label="Settings">⚙</button>
 </header>
 
+<div class="apps" id="apps"></div>
+
+<div class="tabs" role="tablist">
+  <button class="tab" data-tab="tasks" aria-selected="true">Tasks</button>
+  <button class="tab" data-tab="sessions" aria-selected="false">Sessions</button>
+</div>
+
 <main id="list" class="list"></main>
+<main id="sessions" class="list" hidden></main>
 
 <form id="composer" class="composer" autocomplete="off">
+  <div id="target" class="target" hidden>
+    <span id="targetLabel"></span>
+    <button type="button" id="clearTarget" aria-label="Cancel">✕</button>
+  </div>
   <div class="chips" id="chips"></div>
   <div class="inputRow">
     <textarea id="prompt" rows="1" placeholder="Describe the task…" enterkeyhint="send"></textarea>
