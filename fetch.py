@@ -736,6 +736,17 @@ def deepseek_provider(status=None):
 
 # ---------------------------------------------------------------- main
 
+def load_json(path, default):
+    try:
+        with open(path) as fh:
+            return json.load(fh)
+    except Exception:
+        return default
+
+
+GOOD_PATH = os.path.join(DATA_HOME, "last_good.json")
+
+
 def carry_over(provider, previous):
     """Keep the last good numbers when a provider temporarily fails."""
     if not previous or provider["ok"]:
@@ -771,6 +782,7 @@ def main(argv):
     except Exception:
         pass
 
+    good = load_json(GOOD_PATH, {})
     commands = running_commands()
     providers = []
     for pid, fn, status_fn in PROVIDERS:
@@ -786,7 +798,18 @@ def main(argv):
             p["status"] = status
         if p["ok"]:
             p["fetched_at"] = iso_now()
-        providers.append(carry_over(p, previous.get(pid)))
+            good[pid] = p
+        else:
+            # A rate limit or a closed app should not blank the card.
+            p = carry_over(p, previous.get(pid) or good.get(pid))
+        providers.append(p)
+
+    try:
+        with open(GOOD_PATH, "w") as fh:
+            json.dump(good, fh)
+        os.chmod(GOOD_PATH, 0o600)
+    except Exception:
+        pass
 
     doc = {"generated_at": iso_now(), "providers": providers}
 
