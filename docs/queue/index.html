@@ -5,46 +5,60 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#08080c">
+<meta name="theme-color" content="#0a0b0f">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="manifest" href="manifest.webmanifest">
-<title>Queue</title>
+<title>Sai Agents</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-<header class="top">
-  <div class="brand">
-    <span class="logo"></span>
-    <div><h1>Sai Agents</h1><p id="sub">hosted</p></div>
+<div class="shell">
+  <header class="top">
+    <div class="brand">
+      <span class="logo"></span>
+      <div>
+        <h1>Sai Agents</h1>
+        <p id="sub">connecting…</p>
+      </div>
+    </div>
+    <button id="signOut" class="iconBtn" hidden aria-label="Sign out">⏏</button>
+  </header>
+
+  <section id="setup" class="authCard" hidden>
+    <h2>Connect Supabase</h2>
+    <p class="hint">Project Settings → API. The anon key is public; never paste the service_role key.</p>
+    <label>Project URL<input id="cfgUrl" placeholder="https://abcd.supabase.co"></label>
+    <label>Anon key<input id="cfgKey" placeholder="eyJhbGciOi…"></label>
+    <button id="saveCfg" class="primary">Save</button>
+  </section>
+
+  <section id="auth" class="authCard" hidden>
+    <h2>Sign in</h2>
+    <label>Email<input id="email" type="email" autocomplete="username"></label>
+    <label>Password<input id="password" type="password" autocomplete="current-password"></label>
+    <button id="signIn" class="primary">Sign in</button>
+    <button id="signUp" class="ghostLink">Create account</button>
+    <button id="magicLink" class="ghostLink">Email me a link</button>
+    <p id="authState" class="hint"></p>
+  </section>
+
+  <nav class="apps" id="apps" hidden></nav>
+
+  <div class="viewRow" id="viewRow" hidden>
+    <div class="views"><button class="view" aria-selected="true">Tasks</button></div>
+    <span class="viewCount" id="viewCount"></span>
   </div>
-  <button id="signOut" class="ghost" hidden aria-label="Sign out">⏏</button>
-</header>
 
-<section id="setup" class="authCard" hidden>
-  <h2>Connect Supabase</h2>
-  <p class="hint">Project Settings → API. The anon key is public; never paste the service_role key.</p>
-  <label>Project URL<input id="cfgUrl" placeholder="https://abcd.supabase.co"></label>
-  <label>Anon key<input id="cfgKey" placeholder="eyJhbGciOi…"></label>
-  <button id="saveCfg" class="primary">Save</button>
-</section>
-
-<section id="auth" class="authCard" hidden>
-  <h2>Sign in</h2>
-  <label>Email<input id="email" type="email" autocomplete="username"></label>
-  <label>Password<input id="password" type="password" autocomplete="current-password"></label>
-  <button id="signIn" class="primary">Sign in</button>
-  <button id="signUp" class="ghostLink">Create account</button>
-  <button id="magicLink" class="ghostLink">Email me a sign-in link</button>
-  <p id="authState" class="hint"></p>
-</section>
-
-<main id="list" class="list" hidden></main>
+  <main id="list" class="list" hidden></main>
+</div>
 
 <form id="composer" class="composer" autocomplete="off" hidden>
-  <div class="chips" id="chips"></div>
-  <div class="inputRow">
-    <textarea id="prompt" rows="1" placeholder="Describe the task…" enterkeyhint="send"></textarea>
-    <button id="send" type="submit" aria-label="Queue task">↑</button>
+  <div class="composerInner">
+    <div class="chips" id="chips"></div>
+    <div class="inputRow">
+      <textarea id="prompt" rows="1" placeholder="Describe a task…" enterkeyhint="send"></textarea>
+      <button id="send" type="submit" aria-label="Queue task">↑</button>
+    </div>
   </div>
 </form>
 

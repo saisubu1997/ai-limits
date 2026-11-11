@@ -5,49 +5,56 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#08080c">
+<meta name="theme-color" content="#0a0b0f">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="manifest" href="manifest.webmanifest">
-<title>Queue</title>
+<title>Sai Agents</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-<header class="top">
-  <div class="brand">
-    <span class="logo"></span>
-    <div>
-      <h1>Queue</h1>
-      <p id="sub">connecting…</p>
+<div class="shell">
+  <header class="top">
+    <div class="brand">
+      <span class="logo"></span>
+      <div>
+        <h1>Sai Agents</h1>
+        <p id="sub">connecting…</p>
+      </div>
     </div>
+    <button id="gear" class="iconBtn" aria-label="Settings">⚙</button>
+  </header>
+
+  <nav class="apps" id="apps"></nav>
+
+  <div class="viewRow">
+    <div class="views" role="tablist">
+      <button class="view" data-tab="tasks" aria-selected="true">Tasks</button>
+      <button class="view" data-tab="sessions" aria-selected="false">Chats</button>
+    </div>
+    <span class="viewCount" id="viewCount"></span>
   </div>
-  <button id="gear" class="ghost" aria-label="Settings">⚙</button>
-</header>
 
-<div class="apps" id="apps"></div>
-
-<div class="tabs" role="tablist">
-  <button class="tab" data-tab="tasks" aria-selected="true">Tasks</button>
-  <button class="tab" data-tab="sessions" aria-selected="false">Sessions</button>
+  <main id="list" class="list"></main>
+  <main id="sessions" class="list" hidden></main>
 </div>
 
-<main id="list" class="list"></main>
-<main id="sessions" class="list" hidden></main>
-
 <form id="composer" class="composer" autocomplete="off">
-  <div id="target" class="target" hidden>
-    <span id="targetLabel"></span>
-    <button type="button" id="clearTarget" aria-label="Cancel">✕</button>
-  </div>
-  <div class="chips" id="chips"></div>
-  <div class="inputRow">
-    <textarea id="prompt" rows="1" placeholder="Describe the task…" enterkeyhint="send"></textarea>
-    <button id="send" type="submit" aria-label="Queue task">↑</button>
+  <div class="composerInner">
+    <div id="target" class="target" hidden>
+      <span id="targetLabel"></span>
+      <button type="button" id="clearTarget" aria-label="Cancel">✕</button>
+    </div>
+    <div class="chips" id="chips"></div>
+    <div class="inputRow">
+      <textarea id="prompt" rows="1" placeholder="Describe a task…" enterkeyhint="send"></textarea>
+      <button id="send" type="submit" aria-label="Queue task">↑</button>
+    </div>
   </div>
 </form>
 
 <div id="sheet" class="sheet" hidden>
   <div class="sheetCard">
-    <div class="sheetHead"><h2>Settings</h2><button id="closeSheet" class="ghost">✕</button></div>
+    <div class="sheetHead"><h2>Settings</h2><button id="closeSheet" class="iconBtn">✕</button></div>
     <label>Working directory
       <input id="workdir" placeholder="/Users/you/project">
     </label>
