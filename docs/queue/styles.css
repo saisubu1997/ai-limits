@@ -296,3 +296,40 @@ button.rowLine:active { background: var(--cell2); }
 @media (min-width: 720px) {
   .view { padding: 0 24px; }
 }
+
+/* ------------------------------------------- rendered replies (markdown) */
+.msg.bot.md { white-space: normal; padding: 11px 15px; max-width: min(92%, 640px); }
+.md p { margin: 0 0 9px; }
+.md > :last-child { margin-bottom: 0; }
+.md a { color: var(--tint); text-decoration: none; font-weight: 500; }
+.md a:active { opacity: .6; }
+.md strong { font-weight: 650; }
+.md ul, .md ol { margin: 2px 0 10px; padding-left: 20px; }
+.md li { margin: 0 0 7px; padding-left: 2px; }
+.md li:last-child { margin-bottom: 0; }
+.md li.sub { margin-left: 18px; list-style-type: circle; }
+.md ul li::marker { color: var(--label2); }
+.md ol li::marker { color: var(--label2); font-variant-numeric: tabular-nums; }
+.md .mh { font-weight: 700; margin: 12px 0 6px; }
+.md .mh:first-child { margin-top: 0; }
+.md .mh1 { font-size: 19px; } .md .mh2 { font-size: 17.5px; } .md .mh3 { font-size: 16.5px; }
+.md hr { border: 0; border-top: .5px solid var(--sep); margin: 12px 0; }
+.md blockquote { margin: 0 0 9px; padding: 2px 0 2px 12px; border-left: 3px solid var(--sep); color: var(--label2); }
+.md pre { white-space: pre; margin: 4px 0 10px; }
+.md pre code { background: none; padding: 0; font-size: 13px; }
+.md .tbl { overflow-x: auto; margin: 4px 0 10px; }
+.md table { border-collapse: collapse; font-size: 14.5px; min-width: 100%; }
+.md th, .md td { text-align: left; padding: 6px 10px; border-bottom: .5px solid var(--sep); vertical-align: top; }
+.md th { font-weight: 600; color: var(--label2); font-size: 13px; }
+
+/* steps the agent took (tool calls, commands), collapsed by default */
+.stepsBtn { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; max-width: 92%; margin: 2px 0 4px 2px; padding: 5px 11px 5px 8px; border-radius: 99px; background: var(--fill); color: var(--label2); font-size: 13px; font-weight: 500; }
+.stepsBtn span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stepsBtn svg { width: 13px; height: 13px; stroke-width: 2.6; transition: transform .2s; flex: none; }
+.stepsBtn.open svg { transform: rotate(90deg); }
+.steps { align-self: flex-start; list-style: none; margin: 0 0 6px 2px; padding: 8px 12px; border-radius: 12px; background: var(--cell); max-width: 92%; display: grid; gap: 7px; font-size: 13.5px; color: var(--label2); }
+.steps li { display: grid; grid-template-columns: 20px 1fr auto; align-items: start; gap: 6px; }
+.steps .sic { color: var(--label3); font-size: 12px; font-family: var(--mono); text-align: center; line-height: 1.5; }
+.steps .stx { min-width: 0; overflow-wrap: anywhere; }
+.steps .sbad { color: var(--bad); font-size: 12px; font-weight: 600; }
+.spin { flex: none; width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--label3); border-top-color: var(--label2); animation: spin .8s linear infinite; }

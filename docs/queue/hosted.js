@@ -37,6 +37,7 @@ const state = {
   pick: ls.get("agents.pick", "claude"),
   detail: null,            // { kind: "thread" | "session", key }
   full: new Set(),
+  openSteps: new Set(),
   user: null,
 };
 if (!TABS[state.tab]) state.tab = "runs";
@@ -58,17 +59,128 @@ function clock(ts) {
   return d.toDateString() === today.toDateString() ? "Today " + t
     : d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) + " " + t;
 }
-function fmt(text) {
-  let s = esc(String(text || "").replace(/\r/g, ""));
-  s = s.replace(/```[\w-]*\n?([\s\S]*?)```/g, (m, code) => "<pre>" + code.replace(/\n$/, "") + "</pre>");
-  s = s.replace(/^#{1,6}\s+(.*)\n?/gm, "<span class='h'>$1</span>");
-  s = s.replace(/^(\s*)[-*]\s+/gm, "$1• ");
-  s = s.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
-  s = s.replace(/`([^`\n]+)`/g, "<code>$1</code>");
-  // Block elements already break lines; drop the newlines around them (pre-wrap would double them).
-  s = s.replace(/\n*(<pre>)/g, "$1").replace(/(<\/pre>)\n+/g, "$1").replace(/\n{3,}/g, "\n\n");
-  return s.trim();
+/* ------------------------------------------------------------- markdown */
+function shortUrl(u) {
+  try { const x = new URL(u.replace(/&amp;/g, "&")); return x.hostname.replace(/^www\./, "") + (x.pathname.length > 1 ? "/…" : ""); }
+  catch (e) { return u; }
 }
+// `s` is already HTML-escaped.
+function inline(s) {
+  const codes = [];
+  s = s.replace(/`([^`\n]+)`/g, (m, c) => { codes.push(c); return "\u0000" + (codes.length - 1) + "\u0000"; });
+  s = s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g,
+    (m, t, u) => '<a href="' + u + '" target="_blank" rel="noopener">' + t + "</a>");
+  s = s.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g,
+    (m, p, u) => p + '<a href="' + u + '" target="_blank" rel="noopener">' + shortUrl(u) + "</a>");
+  s = s.replace(/\*\*([^*\n]+?)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/(^|[^*\w])\*([^*\n]+?)\*(?![*\w])/g, "$1<em>$2</em>");
+  s = s.replace(/~~([^~\n]+)~~/g, "<del>$1</del>");
+  return s.replace(/\u0000(\d+)\u0000/g, (m, i) => "<code>" + codes[Number(i)] + "</code>");
+}
+const LIST = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
+function md(src) {
+  const lines = esc(String(src || "").replace(/\r/g, "")).split("\n");
+  const out = [];
+  let i = 0;
+  const isBlock = (l) => /^```/.test(l) || /^#{1,6}\s/.test(l) || LIST.test(l) || /^&gt;/.test(l) || /^\s*\|.*\|\s*$/.test(l);
+  while (i < lines.length) {
+    const l = lines[i];
+    let m;
+    if (/^```/.test(l)) {
+      const buf = []; i++;
+      while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]);
+      i++;
+      out.push("<pre><code>" + buf.join("\n") + "</code></pre>");
+    } else if (!l.trim()) {
+      i++;
+    } else if ((m = l.match(/^(#{1,6})\s+(.*)$/))) {
+      out.push('<div class="mh mh' + Math.min(3, m[1].length) + '">' + inline(m[2].replace(/\s*#+\s*$/, "")) + "</div>"); i++;
+    } else if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(l)) {
+      out.push("<hr>"); i++;
+    } else if (/^&gt;/.test(l)) {
+      const buf = [];
+      while (i < lines.length && /^&gt;/.test(lines[i])) buf.push(lines[i++].replace(/^&gt;\s?/, ""));
+      out.push("<blockquote>" + inline(buf.join("<br>")) + "</blockquote>");
+    } else if (/^\s*\|.*\|\s*$/.test(l) && i + 1 < lines.length && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1])) {
+      const cells = (r) => r.trim().replace(/^\||\|$/g, "").split("|").map((c) => inline(c.trim()));
+      const head = cells(l); i += 2;
+      const rows = [];
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) rows.push(cells(lines[i++]));
+      out.push('<div class="tbl"><table><thead><tr>' + head.map((c) => "<th>" + c + "</th>").join("") + "</tr></thead><tbody>" +
+        rows.map((r) => "<tr>" + r.map((c) => "<td>" + c + "</td>").join("") + "</tr>").join("") + "</tbody></table></div>");
+    } else if (LIST.test(l)) {
+      const ordered = /\d/.test(l.match(LIST)[2]);
+      const items = [];
+      while (i < lines.length) {
+        const x = lines[i].match(LIST);
+        if (x) { items.push({ sub: x[1].length >= 2, text: x[3] }); i++; }
+        else if (lines[i].trim() && /^\s{2,}/.test(lines[i]) && items.length) { items[items.length - 1].text += " " + lines[i].trim(); i++; }
+        else break;
+      }
+      const tag = ordered ? "ol" : "ul";
+      out.push("<" + tag + ">" + items.map((it) => "<li" + (it.sub ? ' class="sub"' : "") + ">" + inline(it.text) + "</li>").join("") + "</" + tag + ">");
+    } else {
+      const buf = [];
+      while (i < lines.length && lines[i].trim() && !(buf.length && isBlock(lines[i]))) buf.push(lines[i++]);
+      out.push("<p>" + inline(buf.join("<br>")) + "</p>");
+    }
+  }
+  return out.join("");
+}
+const fmt = md;
+
+/* ------------------------------------------------- run output -> answer */
+// Codex exec prints a console log (header, prompt echo, tool calls, then the
+// answer). Split it into the answer and a list of steps.
+const MARK = /^(user|codex|thinking|exec|tokens used)$/;
+function toolName(s) {
+  const n = s.replace(/\s*\((completed|failed|error)[^)]*\)\s*$/i, "").replace(/\s+started$/, "").trim();
+  const parts = n.split("/").pop().split(".");
+  return parts.map((p) => p.replace(/_/g, " ")).join(" · ");
+}
+function parseRun(text) {
+  const raw = String(text || "").replace(/\r/g, "");
+  if (!/^OpenAI Codex v|^Reading additional input from stdin/m.test(raw)) return { answer: raw.trim(), steps: [], tokens: null };
+  let lines = raw.split("\n");
+  let dashes = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^-{4,}$/.test(lines[i]) && ++dashes === 2) { lines = lines.slice(i + 1); break; }
+  }
+  const blocks = [];
+  let cur = null;
+  for (const l of lines) {
+    if (MARK.test(l)) { cur = { kind: l, lines: [] }; blocks.push(cur); continue; }
+    if (/^mcp: /.test(l)) { blocks.push({ kind: "mcp", lines: [l.slice(5)] }); cur = null; continue; }
+    if (!cur) { cur = { kind: "text", lines: [] }; blocks.push(cur); }
+    cur.lines.push(l);
+  }
+  const steps = [];
+  let answer = "", tokens = null, tail = "";
+  const notes = [];
+  blocks.forEach((b) => {
+    const body = b.lines.join("\n").trim();
+    if (b.kind === "mcp") {
+      const name = toolName(body), done = /\((completed|failed|error)/i.test(body), failed = /failed|error/i.test(body);
+      const open = steps.find((s) => s.k === "tool" && s.t === name && !s.done);
+      if (open) { open.done = done; open.failed = failed; }
+      else steps.push({ k: "tool", t: name, done, failed });
+    } else if (b.kind === "exec") {
+      steps.push({ k: "cmd", t: (b.lines[0] || "").trim(), done: true, failed: /exited \d+|failed/i.test(body) && !/succeeded/i.test(body) });
+    } else if (b.kind === "thinking") {
+      if (body) steps.push({ k: "think", t: body.split("\n")[0].replace(/\*\*/g, ""), done: true });
+    } else if (b.kind === "tokens used") {
+      tokens = (b.lines[0] || "").trim();
+      tail = b.lines.slice(1).join("\n").trim();
+    } else if ((b.kind === "codex" || b.kind === "text") && body) {
+      notes.push(body);
+      steps.push({ k: "note", t: body.split("\n")[0], done: true, full: body });
+    }
+  });
+  answer = tail || notes[notes.length - 1] || "";
+  const kept = steps.filter((st) => !(st.k === "note" && (st.full === answer || answer.startsWith(st.full))));
+  return { answer, steps: kept, tokens };
+}
+
 function sessionIdOf(t) {
   const m = String(t.session_ref || "").match(UUID);
   return m ? m[m.length - 1] : null;
@@ -77,6 +189,10 @@ function stat(st) { return STATUS[st] || STATUS.queued; }
 function icon(app, small) {
   const a = appOf(app);
   return '<span class="icon' + (small ? " sm" : "") + '" style="--c:' + a.color + '">' + a.letter + "</span>";
+}
+function firstLine(text) {
+  const l = String(text || "").split("\n").map((x) => x.trim()).find((x) => x && !/^[-=|`]+$/.test(x));
+  return l ? l.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/[#*`>]/g, "").replace(/^\s*[-+]\s+/, "").trim() : "";
 }
 function lastLine(text) {
   const lines = String(text || "").trim().split("\n").map((l) => l.trim()).filter(Boolean);
@@ -166,7 +282,7 @@ function renderRuns() {
   $("#view-runs").innerHTML = sections.filter((s) => s[1].length).map(([name, rows]) =>
     '<div class="sectionHead">' + name + '</div><div class="group">' + rows.map((th) => {
       const t = th.last;
-      const sub = lastLine(t.output) || t.prompt || (t.status === "queued" ? "Waiting for your Mac" : "");
+      const sub = firstLine(parseRun(t.output).answer) || t.prompt || (t.status === "queued" ? "Waiting for your Mac" : "");
       return cell('data-thread="' + esc(th.key) + '"', th.app, th.title, ago(th.at), sub, t.status);
     }).join("") + "</div>").join("");
 }
@@ -294,24 +410,45 @@ function render() {
 }
 
 /* ----------------------------------------------------------------- detail */
+function stepHtml(st) {
+  const ic = st.k === "tool" ? "⚙︎" : st.k === "cmd" ? "›_" : st.k === "think" ? "✦" : "•";
+  const tail = st.failed ? '<span class="sbad">failed</span>' : st.done ? "" : '<span class="spin"></span>';
+  return '<li><span class="sic">' + ic + '</span><span class="stx">' + esc(st.t) + "</span>" + tail + "</li>";
+}
 function taskBubbles(t) {
   const a = appOf(t.model);
   if (t.action === "open") {
     return '<div class="note">Asked your Mac to open ' + esc(a.label) + " · " + stat(t.status).text.toLowerCase() + "</div>";
   }
-  let out = t.output || "";
-  const LIMIT = 8000;
-  const cut = !state.full.has(t.id) && out.length > LIMIT;
-  if (cut) out = "…" + out.slice(-LIMIT);
-  const waiting = (t.status === "queued" || t.status === "running") && !t.output;
+  const run = parseRun(t.output);
+  const live = t.status === "queued" || t.status === "running";
   const s = stat(t.status);
-  const body = waiting ? '<span class="typing"><i></i><i></i><i></i></span>' : fmt(out) || '<span style="opacity:.6">No output</span>';
+  let answer = run.answer;
+  const LIMIT = 12000;
+  const cut = !state.full.has(t.id) && answer.length > LIMIT;
+  if (cut) answer = answer.slice(0, LIMIT) + "…";
+
+  let steps = "";
+  if (run.steps.length) {
+    const open = state.openSteps.has(t.id);
+    const last = run.steps[run.steps.length - 1];
+    const label = live && !run.answer ? esc(last.t) + "…"
+      : run.steps.length + (run.steps.length === 1 ? " step" : " steps") + (run.tokens ? " · " + esc(run.tokens) + " tokens" : "");
+    steps = '<button class="stepsBtn' + (open ? " open" : "") + '" data-steps="' + t.id + '">' +
+      (live && !run.answer ? '<span class="spin"></span>' : '<svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>') +
+      "<span>" + label + "</span></button>" +
+      (open ? '<ul class="steps">' + run.steps.map(stepHtml).join("") + "</ul>" : "");
+  }
+  let body;
+  if (answer) body = '<div class="msg bot md">' + md(answer) +
+    (cut ? '<button class="more" data-full="' + t.id + '">Show all</button>' : "") + "</div>";
+  else if (live) body = '<div class="msg bot"><span class="typing"><i></i><i></i><i></i></span></div>';
+  else body = '<div class="msg bot"><span style="opacity:.6">No output</span></div>';
+
   return '<div class="stamp"><b>' + clock(t.created_at) + "</b></div>" +
     '<div class="msg user">' + esc(t.prompt) + "</div>" +
     '<div class="botMeta">' + icon(t.model, true) + "<span>" + a.label + '</span><span class="stext" style="--sc:var(' + s.v + ')">' + s.text + "</span></div>" +
-    '<div class="msg bot">' + body +
-    (cut ? '<div><button class="more" data-full="' + t.id + '">Show full output (' + (t.output.length / 1000).toFixed(1) + "k chars)</button></div>" : "") +
-    "</div>";
+    steps + body;
 }
 
 function currentThread() {
@@ -644,7 +781,13 @@ $("#reply").addEventListener("submit", async (e) => {
 });
 $("#thread").addEventListener("click", (e) => {
   const f = e.target.closest("[data-full]");
-  if (f) { state.full.add(f.dataset.full); renderDetail(); }
+  if (f) { state.full.add(f.dataset.full); renderDetail(); return; }
+  const st = e.target.closest("[data-steps]");
+  if (st) {
+    const id = st.dataset.steps;
+    if (state.openSteps.has(id)) state.openSteps.delete(id); else state.openSteps.add(id);
+    tick(); renderDetail();
+  }
 });
 
 /* ---------------------------------------------------------- action sheet */
