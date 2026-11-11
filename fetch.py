@@ -743,6 +743,8 @@ def carry_over(provider, previous):
     if previous.get("ok") and previous.get("metrics"):
         provider["metrics"] = previous["metrics"]
         provider["plan"] = previous.get("plan")
+        provider["status"] = previous.get("status")
+        provider["ok"] = True          # we still have usable numbers
         provider["stale"] = True
         provider["stale_since"] = previous.get("fetched_at")
     return provider
