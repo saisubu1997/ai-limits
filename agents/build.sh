@@ -6,7 +6,8 @@ APP="build/Sai Agents.app"
 rm -rf build
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" build/AppIcon.iconset
 
-swiftc -O -o "$APP/Contents/MacOS/SaiAgents" main.swift \
+# The toolchain defaults to a macOS 28 minimum, which LaunchServices refuses on 27.
+swiftc -O -target "$(uname -m)-apple-macos14.0" -o "$APP/Contents/MacOS/SaiAgents" main.swift \
   -framework Cocoa -framework WebKit 2>&1 | grep -v "warning:" || true
 
 SRC=web/icon-512.png

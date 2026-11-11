@@ -16,3 +16,4 @@ demo/cloudflared.log
 # editors
 .vscode/
 .idea/
+hosted/dist/

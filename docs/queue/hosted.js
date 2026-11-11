@@ -68,7 +68,43 @@ function show(section) {
   $("#signOut").hidden = !signedIn;
 }
 
+function bakedConfig() {
+  const c = window.QUEUE_CONFIG;
+  if (!c || !c.url || !c.anonKey || c.url.indexOf("__") === 0) return null;
+  return c;
+}
+
+function jwtEmail(token) {
+  try {
+    const part = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(atob(part)).email || "";
+  } catch { return ""; }
+}
+
+function adoptHashSession() {
+  if (!location.hash || location.hash.length < 10) return false;
+  const p = new URLSearchParams(location.hash.slice(1));
+  if (p.get("error_description")) {
+    alert(p.get("error_description"));
+    history.replaceState(null, "", location.pathname);
+    return false;
+  }
+  const token = p.get("access_token");
+  if (!token) return false;
+  store.session = {
+    access_token: token,
+    refresh_token: p.get("refresh_token"),
+    expires_at: Date.now() / 1000 + Number(p.get("expires_in") || 3600),
+    user: { id: p.get("user_id") || "", email: jwtEmail(token) },
+  };
+  history.replaceState(null, "", location.pathname);
+  return true;
+}
+
 function boot() {
+  const baked = bakedConfig();
+  if (baked && !store.cfg) store.cfg = baked;
+  adoptHashSession();
   const cfg = store.cfg;
   if (!cfg || !cfg.url || !cfg.anonKey) { show("setup"); $("#sub").textContent = "setup needed"; return; }
   if (!store.session) { show("auth"); $("#sub").textContent = "sign in"; return; }
@@ -125,6 +161,27 @@ $("#signUp").onclick = async () => {
 };
 
 $("#signOut").onclick = () => { store.session = null; boot(); };
+
+$("#magicLink").onclick = async () => {
+  const cfg = store.cfg;
+  const email = $("#email").value.trim();
+  if (!email) { $("#authState").textContent = "Enter your email first."; return; }
+  try {
+    $("#authState").textContent = "sending…";
+    const res = await fetch(cfg.url + "/auth/v1/otp", {
+      method: "POST",
+      headers: { apikey: cfg.anonKey, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email,
+        create_user: true,
+        options: { email_redirect_to: location.origin + location.pathname },
+      }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.msg || body.error_description || "could not send");
+    $("#authState").textContent = "Check your inbox for the link.";
+  } catch (e) { $("#authState").textContent = e.message; }
+};
 
 function render() {
   const list = $("#list");
@@ -193,5 +250,9 @@ $("#list").addEventListener("click", (e) => {
   render();
 });
 
+if (location.pathname.endsWith(".html") && !location.pathname.endsWith("/")) {
+  // served from Supabase Storage: keep working as a single file
+  document.querySelectorAll('link[rel="manifest"]').forEach((l) => l.remove());
+}
 buildChips();
 boot();
