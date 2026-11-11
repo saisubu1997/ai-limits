@@ -722,11 +722,14 @@ def deepseek_provider(status=None):
     funded = balance + spent
     used_pct = (spent / funded * 100.0) if funded > 0 else None
 
+    # DeepSeek has no plan quota - only a prepaid wallet. Showing a percentage
+    # invites comparison with numbers this API does not expose, so the card
+    # states money in and money spent instead.
     out.update(ok=True, metrics=[metric(
-        "credits", "Credits", "Wallet balance", used_pct, None, None,
+        "credits", "Credits", "Prepaid wallet", used_pct, None, None,
         value_text="%s%.2f" % (symbol, balance),
-        detail_text="%.0f%% used \u00B7 %s%.2f spent" % (used_pct or 0, symbol, spent),
-    )], notes=notes)
+        detail_text="%s%.2f spent of %s%.2f funded" % (symbol, spent, symbol, funded),
+    )], notes=notes + ["DeepSeek has no plan limit, only a balance"])
     return out
 
 
