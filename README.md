@@ -46,7 +46,7 @@ bash install.sh              # add --tunnel for internet access
 ### From source
 
 ```bash
-git clone https://github.com/<you>/ai-limits.git
+git clone https://github.com/saisubu1997/ai-limits.git
 cd ai-limits
 ./install.sh
 ```
