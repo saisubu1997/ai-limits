@@ -1,7 +1,9 @@
 {
-  "name": "AI Limits Queue",
-  "short_name": "Queue",
+  "name": "Sai Agents",
+  "short_name": "Sai Agents",
+  "description": "Work queue for Claude, Codex, Antigravity and DeepSeek",
   "start_url": ".",
+  "scope": ".",
   "display": "standalone",
   "background_color": "#08080c",
   "theme_color": "#08080c",
