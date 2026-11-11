@@ -2,24 +2,27 @@
    the Mac runner picks queued tasks up and streams output back. */
 
 const APPS = {
-  claude:      { label: "Claude",      letter: "C", color: "#d97757", runs: true,  how: "Runs headlessly with Claude Code" },
-  codex:       { label: "ChatGPT",     letter: "G", color: "#10a37f", runs: true,  how: "Runs headlessly with the Codex CLI" },
-  antigravity: { label: "Antigravity", letter: "A", color: "#4f86f7", runs: false, how: "Opens the app on your Mac with your prompt on the clipboard" },
-  deepseek:    { label: "DeepSeek",    letter: "D", color: "#6d5dfc", runs: false, how: "Opens DeepSeek Harness with your prompt on the clipboard" },
+  claude:      { label: "Claude",      letter: "C", color: "#d97757", runs: true,  how: "Runs on your Mac with Claude Code" },
+  codex:       { label: "ChatGPT",     letter: "G", color: "#10a37f", runs: true,  how: "Runs on your Mac with the Codex CLI" },
+  antigravity: { label: "Antigravity", letter: "A", color: "#4f86f7", runs: false, how: "Opens Antigravity on your Mac with your prompt copied" },
+  deepseek:    { label: "DeepSeek",    letter: "D", color: "#6d5dfc", runs: false, how: "Opens DeepSeek Harness on your Mac with your prompt copied" },
 };
 const STATUS = {
-  queued:  { text: "Queued",  v: "--faint" },
-  running: { text: "Running", v: "--run" },
-  done:    { text: "Done",    v: "--ok" },
-  failed:  { text: "Failed",  v: "--bad" },
+  queued:  { text: "Queued",     v: "--faint" },
+  running: { text: "Running",    v: "--run" },
+  done:    { text: "Done",       v: "--ok" },
+  failed:  { text: "Failed",     v: "--bad" },
   manual:  { text: "Handed off", v: "--manual" },
 };
+const TABS = { runs: "Runs", sessions: "Sessions", apps: "Limits" };
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
+const CHEV = '<svg class="chev" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const now = () => Date.now() / 1000;
-const appOf = (id) => APPS[id] || { label: id || "App", letter: "?", color: "#888", runs: false, how: "" };
+const appOf = (id) => APPS[id] || { label: id || "App", letter: "?", color: "#8e8e93", runs: false, how: "" };
+const tick = () => { try { navigator.vibrate && navigator.vibrate(8); } catch (e) {} };
 
 const ls = {
   get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
@@ -36,6 +39,7 @@ const state = {
   full: new Set(),
   user: null,
 };
+if (!TABS[state.tab]) state.tab = "runs";
 
 let sb = null;
 
@@ -48,26 +52,31 @@ function ago(ts) {
   if (s < 86400 * 7) return Math.round(s / 86400) + "d";
   return new Date(ts * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
+function clock(ts) {
+  const d = new Date((ts || 0) * 1000), today = new Date();
+  const t = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return d.toDateString() === today.toDateString() ? "Today " + t
+    : d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) + " " + t;
+}
 function fmt(text) {
   let s = esc(String(text || "").replace(/\r/g, ""));
   s = s.replace(/```[\w-]*\n?([\s\S]*?)```/g, (m, code) => "<pre>" + code.replace(/\n$/, "") + "</pre>");
-  s = s.replace(/^#{1,6}\s+(.*)$/gm, "<span class='h'>$1</span>");
+  s = s.replace(/^#{1,6}\s+(.*)\n?/gm, "<span class='h'>$1</span>");
   s = s.replace(/^(\s*)[-*]\s+/gm, "$1• ");
   s = s.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
   s = s.replace(/`([^`\n]+)`/g, "<code>$1</code>");
-  return s;
+  // Block elements already break lines; drop the newlines around them (pre-wrap would double them).
+  s = s.replace(/\n*(<pre>)/g, "$1").replace(/(<\/pre>)\n+/g, "$1").replace(/\n{3,}/g, "\n\n");
+  return s.trim();
 }
 function sessionIdOf(t) {
   const m = String(t.session_ref || "").match(UUID);
   return m ? m[m.length - 1] : null;
 }
-function statusHtml(st) {
-  const s = STATUS[st] || STATUS.queued;
-  return '<span class="status" data-s="' + st + '" style="--sc:var(' + s.v + ')"><i></i>' + s.text + "</span>";
-}
-function glyph(app, small) {
+function stat(st) { return STATUS[st] || STATUS.queued; }
+function icon(app, small) {
   const a = appOf(app);
-  return '<span class="glyph' + (small ? " sm" : "") + '" style="--c:' + a.color + '">' + a.letter + "</span>";
+  return '<span class="icon' + (small ? " sm" : "") + '" style="--c:' + a.color + '">' + a.letter + "</span>";
 }
 function lastLine(text) {
   const lines = String(text || "").trim().split("\n").map((l) => l.trim()).filter(Boolean);
@@ -77,12 +86,27 @@ let toastTimer = null;
 function toast(msg) {
   const t = $("#toast");
   t.textContent = msg; t.hidden = false;
+  t.style.animation = "none"; void t.offsetWidth; t.style.animation = "";
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { t.hidden = true; }, 2400);
 }
 function autoGrow(el, max) {
   el.style.height = "auto";
   el.style.height = Math.min(max, el.scrollHeight) + "px";
+}
+function cell(attr, app, title, time, sub, st) {
+  const s = st ? stat(st) : null;
+  const status = s
+    ? '<span class="sdot' + (st === "running" ? " pulse" : "") + '" style="--sc:var(' + s.v + ')"></span>' +
+      (st === "done" ? "" : '<span class="stext" style="--sc:var(' + s.v + ')">' + s.text + "</span>" + (sub ? " · " : ""))
+    : "";
+  return '<button class="cell" ' + attr + ">" + icon(app) +
+    '<div class="cellMain"><div class="cellTop"><span class="cellTitle">' + esc(title) + '</span><span class="cellTime">' + time + "</span></div>" +
+    '<div class="cellSub">' + status + '<span class="txt">' + esc(sub) + "</span></div></div>" + CHEV + "</button>";
+}
+function emptyState(svgPath, title, text, action) {
+  return '<div class="empty"><svg class="emptyIcon" viewBox="0 0 24 24">' + svgPath + "</svg><b>" + title + "</b>" + text +
+    (action ? '<div><button class="btn tinted" data-compose>' + action + "</button></div>" : "") + "</div>";
 }
 
 /* ---------------------------------------------------------------- threads */
@@ -95,7 +119,6 @@ function threads() {
     const root = t.resume_id ? (alias[t.resume_id] || t.resume_id) : t.id;
     const sid = sessionIdOf(t);
     if (sid && !alias[sid]) alias[sid] = root;
-    t._root = root;
     if (!groups.has(root)) groups.set(root, []);
     groups.get(root).push(t);
   }
@@ -121,7 +144,7 @@ function resumeTarget(items) {
 function renderFilters() {
   const items = [["all", { label: "All" }]].concat(Object.entries(APPS));
   $("#filters").innerHTML = items.map(([id, a]) =>
-    '<button class="pill" data-f="' + id + '" aria-pressed="' + (state.filter === id) + '">' +
+    '<button class="chip" data-f="' + id + '" aria-pressed="' + (state.filter === id) + '">' +
     (a.color ? '<span class="dot" style="--c:' + a.color + '"></span>' : "") + a.label + "</button>").join("");
   $("#filters").hidden = state.tab === "apps";
 }
@@ -129,43 +152,47 @@ function renderFilters() {
 function renderRuns() {
   const list = threads().filter((th) => state.filter === "all" || th.app === state.filter);
   if (!list.length) {
-    $("#view-runs").innerHTML = '<div class="empty"><b>No runs yet</b>Tap + to send a task to your Mac.</div>';
+    $("#view-runs").innerHTML = emptyState('<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>', "No runs yet",
+      "Send a task and watch it run on your Mac.", "New Task");
     return;
   }
-  $("#view-runs").innerHTML = '<div class="list">' + list.map((th) => {
-    const t = th.last;
-    const sub = t.status === "running" || t.status === "queued"
-      ? (lastLine(t.output) || t.prompt || "Waiting for the Mac…")
-      : (lastLine(t.output) || t.prompt || "");
-    const n = th.items.length > 1 ? " · " + th.items.length + " turns" : "";
-    return '<button class="row" data-thread="' + esc(th.key) + '">' + glyph(th.app) +
-      '<div class="body"><div class="t">' + esc(th.title) + '</div><div class="s">' + esc(sub) + "</div></div>" +
-      '<div class="side"><span class="when">' + ago(th.at) + n + "</span>" + statusHtml(t.status) + "</div></button>";
-  }).join("") + "</div>";
+  const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+  const sections = [["Active", []], ["Today", []], ["Earlier", []]];
+  list.forEach((th) => {
+    const st = th.last.status;
+    const i = st === "running" || st === "queued" ? 0 : th.at * 1000 >= dayStart.getTime() ? 1 : 2;
+    sections[i][1].push(th);
+  });
+  $("#view-runs").innerHTML = sections.filter((s) => s[1].length).map(([name, rows]) =>
+    '<div class="sectionHead">' + name + '</div><div class="group">' + rows.map((th) => {
+      const t = th.last;
+      const sub = lastLine(t.output) || t.prompt || (t.status === "queued" ? "Waiting for your Mac" : "");
+      return cell('data-thread="' + esc(th.key) + '"', th.app, th.title, ago(th.at), sub, t.status);
+    }).join("") + "</div>").join("");
 }
 
 function renderSessions() {
   const el = $("#view-sessions");
   if (!state.hasSessions) {
-    el.innerHTML = '<div class="empty"><b>Sessions aren\'t synced yet</b>Run <code>queue/connect-supabase.sh</code> on your Mac once to turn this on.</div>';
+    el.innerHTML = emptyState('<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-5 4v-4.3A2.5 2.5 0 0 1 4 13.5z"/>',
+      "Sessions aren't synced", "Link your Mac to see its sessions here.");
     return;
   }
   const list = state.sessions.filter((s) => state.filter === "all" || s.app === state.filter);
   if (!list.length) {
-    el.innerHTML = '<div class="empty"><b>No sessions</b>Recent Claude, ChatGPT and DeepSeek sessions on your Mac show up here.</div>';
+    el.innerHTML = emptyState('<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-5 4v-4.3A2.5 2.5 0 0 1 4 13.5z"/>',
+      "No sessions", "Recent Claude, ChatGPT and DeepSeek sessions on your Mac show up here.");
     return;
   }
   const order = ["claude", "codex", "deepseek", "antigravity"];
   const by = {};
   list.forEach((s) => { (by[s.app] = by[s.app] || []).push(s); });
   el.innerHTML = order.filter((a) => by[a]).map((a) =>
-    '<div class="group">' + appOf(a).label + "</div>" +
-    '<div class="list">' + by[a].map((s) => {
+    '<div class="sectionHead">' + appOf(a).label + '</div><div class="group">' + by[a].map((s) => {
       const p = Array.isArray(s.preview) ? s.preview : [];
       const last = p.length ? p[p.length - 1].t : "";
-      return '<button class="row" data-session="' + esc(s.id) + '">' + glyph(s.app) +
-        '<div class="body"><div class="t">' + esc(s.title || "Untitled session") + '</div><div class="s">' + esc(lastLine(last) || (s.cwd || "")) + "</div></div>" +
-        '<div class="side"><span class="when">' + ago(s.updated_at) + "</span></div></button>";
+      return cell('data-session="' + esc(s.id) + '"', s.app, s.title || "Untitled session", ago(s.updated_at),
+        lastLine(last) || (s.cwd ? s.cwd.split("/").pop() : ""), null);
     }).join("") + "</div>").join("");
 }
 
@@ -177,9 +204,7 @@ function untilText(iso) {
   const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
   return "resets in " + (d ? d + "d " + h + "h" : h ? h + "h " + m + "m" : m + "m");
 }
-function barColor(left) {
-  return left < 20 ? "var(--bad)" : left < 50 ? "var(--run)" : "var(--ok)";
-}
+function barColor(left) { return left < 20 ? "var(--bad)" : left < 50 ? "var(--run)" : "var(--ok)"; }
 function appStatus(p) {
   const s = (p && p.status) || {};
   if (!s.running) return { text: s.sessions > 0 ? s.sessions + " recent" : "Not open", v: "--faint" };
@@ -193,7 +218,7 @@ function metricHtml(m) {
   const sub = [m.sublabel, m.detail_text || untilText(m.reset_at)].filter(Boolean).join(" · ");
   const color = m.value_text ? "var(--run)" : barColor(left);
   return '<div class="metric"><div class="mrow"><span>' + esc(m.label) + '</span><b style="color:' +
-    (m.value_text ? "var(--text)" : color) + '">' + esc(value) + "</b></div>" +
+    (m.value_text ? "var(--label)" : color) + '">' + esc(value) + "</b></div>" +
     '<div class="bar"><i style="width:' + left + "%;background:" + color + '"></i></div>' +
     (sub ? '<div class="msub">' + esc(sub) + "</div>" : "") + "</div>";
 }
@@ -207,35 +232,35 @@ function renderApps() {
     const st = appStatus(p);
     const s = p && p.status;
     const sub = s && s.running && s.session_name
-      ? '<div class="live">▸ ' + esc(s.session_name) + "</div>"
-      : '<div class="mode">' + esc((p && (p.vendor || p.name)) || (a.runs ? "Headless" : "Hand-off")) + "</div>";
+      ? '<div class="lSub live">' + esc(s.session_name) + "</div>"
+      : '<div class="lSub">' + esc((p && (p.vendor || p.name)) || (a.runs ? "Runs on your Mac" : "Hand-off")) + "</div>";
     let body;
     if (missing) body = '<div class="msub">Not installed on your Mac</div>';
     else if (!p) body = '<div class="msub">' + (limits ? "No limits reported" : "Limits appear once your Mac is linked") + "</div>";
     else if (!p.ok && p.error) body = '<div class="msub">' + esc(p.error) + "</div>";
     else body = (p.metrics || []).map(metricHtml).join("") || '<div class="msub">No limits reported</div>';
-    return '<div class="appCard">' +
-      '<div class="ahead">' + glyph(id) +
-      '<div class="aname"><div class="name">' + a.label +
-      (p && p.plan ? ' <span class="plan" style="--c:' + a.color + '">' + esc(p.plan) + "</span>" : "") +
+    return '<div class="limitCard">' +
+      '<div class="lHead">' + icon(id) +
+      '<div style="min-width:0"><div class="lName">' + a.label +
+      (p && p.plan ? '<span class="plan" style="--c:' + a.color + '">' + esc(p.plan) + "</span>" : "") +
       "</div>" + sub + "</div>" +
-      (p ? '<span class="status" style="--sc:var(' + st.v + ')"><i></i>' + st.text + "</span>" : "") +
+      (p ? '<span class="badge" style="--sc:var(' + st.v + ')"><i></i>' + st.text + "</span>" : "") +
       "</div>" + body +
-      '<div class="acts"><button class="btn go" data-new="' + id + '">New task</button><button class="btn" data-open="' + id + '">Open on Mac</button></div>' +
+      '<div class="lActs"><button class="go" data-new="' + id + '">New Task</button><button data-open="' + id + '">Open on Mac</button></div>' +
       "</div>";
   }).join("");
   const stamp = limits && limits.generated_at
-    ? '<div class="fine" style="text-align:center">Limits updated ' + ago(Date.parse(limits.generated_at) / 1000) + " ago</div>" : "";
+    ? '<div class="sectionFoot" style="text-align:center;margin-top:10px">Updated ' + ago(Date.parse(limits.generated_at) / 1000) + " ago</div>" : "";
   const mac = runner
-    ? '<div class="kv"><span>Mac</span><span>' + esc(runner.name || runner.id) + "</span></div>" +
-      '<div class="kv"><span>Last seen</span><span>' + (macOnline() ? "online" : ago(runner.seen_at) + " ago") + "</span></div>"
-    : '<div class="kv"><span>Mac</span><span>' + (state.hasRunners ? "not connected" : "status not synced") + "</span></div>";
+    ? '<div class="rowLine"><span>Name</span><span class="v">' + esc(runner.name || runner.id) + "</span></div>" +
+      '<div class="rowLine"><span>Status</span><span class="v">' + (macOnline() ? "Online" : "Last seen " + ago(runner.seen_at) + " ago") + "</span></div>"
+    : '<div class="rowLine"><span>Status</span><span class="v">' + (state.hasRunners ? "Not linked" : "Not synced") + "</span></div>";
   $("#view-apps").innerHTML =
-    '<div class="appGrid">' + cards + "</div>" + stamp +
-    '<div class="group">Mac</div><div class="card">' + mac + "</div>" +
-    '<div class="group">Account</div><div class="card">' +
-    '<div class="kv"><span>Signed in as</span><span>' + esc(state.user && state.user.email) + "</span></div>" +
-    '<div style="margin-top:10px"><button class="btn small" id="signOut">Sign out</button></div></div>';
+    '<div class="sectionHead">Apps</div>' + cards + stamp +
+    '<div class="sectionHead">Mac</div><div class="group">' + mac + "</div>" +
+    '<div class="sectionHead">Account</div><div class="group">' +
+    '<div class="rowLine"><span>Email</span><span class="v">' + esc(state.user && state.user.email) + "</span></div></div>" +
+    '<div class="group" style="margin-top:20px"><button class="rowLine danger" id="signOut">Sign Out</button></div>';
 }
 
 function macRunner() {
@@ -246,16 +271,20 @@ function macOnline() {
   return !!(r && now() - (r.seen_at || 0) < 45);
 }
 function renderMac() {
-  const pill = $("#macPill");
+  const line = $("#macLine");
   const r = macRunner();
-  pill.dataset.state = !r ? "unknown" : macOnline() ? "online" : "offline";
-  pill.querySelector("span").textContent = !r ? "Mac" : macOnline() ? "Mac online" : "Mac offline";
+  const active = state.tasks.filter((t) => t.status === "running" || t.status === "queued").length;
+  line.dataset.state = !r ? "unknown" : macOnline() ? "online" : "offline";
+  const base = !r ? (state.hasRunners ? "Mac not linked" : "Mac status unavailable")
+    : (r.name || "Mac") + (macOnline() ? " · Online" : " · Offline");
+  line.querySelector("span").textContent = base + (active ? " · " + active + " active" : "");
 }
 
 function render() {
   renderFilters();
   renderMac();
-  $("#pageTitle").textContent = { runs: "Runs", sessions: "Sessions", apps: "Limits" }[state.tab];
+  $("#pageTitle").textContent = TABS[state.tab];
+  $("#navTitle").textContent = TABS[state.tab];
   document.querySelectorAll(".tab").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === state.tab)));
   ["runs", "sessions", "apps"].forEach((v) => { $("#view-" + v).hidden = v !== state.tab; });
   if (state.tab === "runs") renderRuns();
@@ -268,19 +297,21 @@ function render() {
 function taskBubbles(t) {
   const a = appOf(t.model);
   if (t.action === "open") {
-    return '<div class="note">Asked the Mac to open ' + esc(a.label) + " · " + (STATUS[t.status] || STATUS.queued).text.toLowerCase() + "</div>";
+    return '<div class="note">Asked your Mac to open ' + esc(a.label) + " · " + stat(t.status).text.toLowerCase() + "</div>";
   }
   let out = t.output || "";
   const LIMIT = 8000;
   const cut = !state.full.has(t.id) && out.length > LIMIT;
   if (cut) out = "…" + out.slice(-LIMIT);
   const waiting = (t.status === "queued" || t.status === "running") && !t.output;
-  const body = waiting ? '<span class="typing"><i></i><i></i><i></i></span>' : fmt(out) || '<span class="muted">No output</span>';
-  return '<div class="msg user">' + esc(t.prompt) + "</div>" +
-    '<div class="msg bot"><div class="meta">' + glyph(t.model, true) + "<span>" + a.label + " · " + ago(t.updated_at || t.created_at) + "</span>" + statusHtml(t.status) + "</div>" +
-    '<div class="bubble">' + body +
+  const s = stat(t.status);
+  const body = waiting ? '<span class="typing"><i></i><i></i><i></i></span>' : fmt(out) || '<span style="opacity:.6">No output</span>';
+  return '<div class="stamp"><b>' + clock(t.created_at) + "</b></div>" +
+    '<div class="msg user">' + esc(t.prompt) + "</div>" +
+    '<div class="botMeta">' + icon(t.model, true) + "<span>" + a.label + '</span><span class="stext" style="--sc:var(' + s.v + ')">' + s.text + "</span></div>" +
+    '<div class="msg bot">' + body +
     (cut ? '<div><button class="more" data-full="' + t.id + '">Show full output (' + (t.output.length / 1000).toFixed(1) + "k chars)</button></div>" : "") +
-    "</div></div>";
+    "</div>";
 }
 
 function currentThread() {
@@ -302,7 +333,7 @@ function renderDetail() {
     if (!th) { html = '<div class="empty">This run was deleted.</div>'; }
     else {
       app = th.app; title = th.title;
-      sub = appOf(app).label + " · " + (STATUS[th.last.status] || STATUS.queued).text;
+      sub = appOf(app).label + " · " + stat(th.last.status).text;
       const sess = state.sessions.find((s) => s.session_id === th.key);
       if (sess && th.items[0].resume_id) html += previewHtml(sess);
       html += th.items.map(taskBubbles).join("");
@@ -322,29 +353,33 @@ function renderDetail() {
   }
   $("#detailTitle").textContent = title;
   $("#detailSub").textContent = sub;
+  $("#backLabel").textContent = TABS[state.tab];
   box.innerHTML = html;
   const a = appOf(app);
-  $("#replyText").placeholder = canResume ? "Continue in this " + a.label + " session…"
-    : a.runs ? "Send a new " + a.label + " task…" : "Hand off to " + a.label + " on your Mac…";
+  $("#replyText").placeholder = canResume ? "Message " + a.label
+    : a.runs ? "New " + a.label + " task" : "Hand off to " + a.label;
   if (stick || d.justOpened) { box.scrollTop = box.scrollHeight; d.justOpened = false; }
 }
 
 function previewHtml(s) {
   const p = Array.isArray(s.preview) ? s.preview : [];
   if (!p.length) return "";
-  return '<div class="note">Latest from this session on your Mac</div>' + p.map((m) =>
+  return '<div class="stamp">On your Mac · <b>' + clock(s.updated_at) + "</b></div>" + p.map((m) =>
     m.r === "user"
       ? '<div class="msg user">' + esc(m.t) + "</div>"
-      : '<div class="msg bot"><div class="bubble">' + fmt(m.t) + "</div></div>").join("") +
-    '<div class="note">' + ago(s.updated_at) + " ago</div>";
+      : '<div class="msg bot">' + fmt(m.t) + "</div>").join("");
 }
 
 function openDetail(kind, key) {
   const push = !state.detail;
   state.detail = { kind, key, justOpened: true };
-  $("#detail").hidden = false;
-  document.body.style.overflow = "hidden";
-  if (push) history.pushState({ detail: true }, "");
+  const el = $("#detail");
+  el.classList.remove("out"); el.style.transform = ""; el.style.transition = "";
+  el.hidden = false;
+  if (push) {
+    el.style.animation = "none"; void el.offsetWidth; el.style.animation = "";
+    history.pushState({ detail: true }, "");
+  }
   renderDetail();
 }
 function closeDetail(fromPop) {
@@ -353,9 +388,11 @@ function closeDetail(fromPop) {
   // the popstate handler below does the actual closing.
   if (!fromPop && history.state && history.state.detail) { history.back(); return; }
   state.detail = null;
-  $("#detail").hidden = true;
-  $("#menu").hidden = true;
-  document.body.style.overflow = "";
+  closeMenu();
+  const el = $("#detail");
+  el.style.transition = "";
+  el.classList.add("out");
+  setTimeout(() => { if (!state.detail) { el.hidden = true; el.classList.remove("out"); el.style.transform = ""; } }, 300);
   render();
 }
 window.addEventListener("popstate", () => closeDetail(true));
@@ -401,7 +438,8 @@ async function openOnMac(model) {
     action: "open", created_at: t, updated_at: t, owner: state.user.id,
   });
   if (error) return toast(error.message);
-  toast(macOnline() ? "Opening " + appOf(model).label + " on your Mac" : "Queued: opens when your Mac is online");
+  tick();
+  toast(macOnline() ? "Opening " + appOf(model).label + " on your Mac" : "Opens when your Mac is back online");
   soon();
 }
 
@@ -436,7 +474,7 @@ function showAuth(needCfg) {
   $("#signInForm").hidden = needCfg;
 }
 
-let started = false, poll = null;
+let started = false;
 function startApp() {
   $("#auth").hidden = true;
   $("#app").hidden = false;
@@ -447,10 +485,10 @@ function startApp() {
   sb.channel("agents")
     .on("postgres_changes", { event: "*", schema: "public", table: "tasks" }, soon)
     .on("postgres_changes", { event: "*", schema: "public", table: "sessions" }, soon)
-    .on("postgres_changes", { event: "*", schema: "public", table: "runners" }, () => { soon(); })
+    .on("postgres_changes", { event: "*", schema: "public", table: "runners" }, soon)
     .subscribe();
   // Realtime does the heavy lifting; this is the safety net.
-  poll = setInterval(() => {
+  setInterval(() => {
     if (document.hidden) return;
     const busy = state.tasks.some((t) => t.status === "running" || t.status === "queued");
     if (busy || Math.random() < 0.35) load(); else renderMac();
@@ -472,34 +510,31 @@ $("#signInForm").addEventListener("submit", async (e) => {
   const { error } = await sb.auth.signInWithPassword({ email: $("#email").value.trim(), password: $("#password").value });
   msg(error ? error.message : "");
 });
-$("#signUp").addEventListener("click", async () => {
-  const email = $("#email").value.trim(), password = $("#password").value;
-  if (!email || !password) return msg("Enter an email and a password first.");
-  msg("Creating account…");
-  const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: location.origin + location.pathname } });
-  if (error) return msg(error.message);
-  msg(data.session ? "" : "Check your email to confirm, then sign in.");
-});
 $("#magicLink").addEventListener("click", async () => {
   const email = $("#email").value.trim();
   if (!email) return msg("Enter your email first.");
   msg("Sending…");
-  const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
+  const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: false, emailRedirectTo: location.origin + location.pathname } });
   msg(error ? error.message : "Check your inbox for the sign-in link.");
 });
 
-/* ----------------------------------------------------------------- events */
+/* ------------------------------------------------------------ navigation */
 $("#filters").addEventListener("click", (e) => {
   const b = e.target.closest("[data-f]");
   if (!b) return;
   state.filter = b.dataset.f; ls.set("agents.filter", state.filter);
-  render();
+  tick(); render();
 });
 document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => {
+  if (state.tab === b.dataset.tab) { window.scrollTo({ top: 0, behavior: "smooth" }); return; }
   state.tab = b.dataset.tab; ls.set("agents.tab", state.tab);
-  render(); window.scrollTo(0, 0);
+  tick(); render(); window.scrollTo(0, 0); onScroll();
 }));
-$("#macPill").addEventListener("click", () => { state.tab = "apps"; ls.set("agents.tab", "apps"); render(); });
+$("#macLine").addEventListener("click", () => { state.tab = "apps"; ls.set("agents.tab", "apps"); render(); window.scrollTo(0, 0); });
+
+// Large title collapses into the bar, like a native navigation bar.
+function onScroll() { $("#nav").classList.toggle("scrolled", window.scrollY > 38); }
+window.addEventListener("scroll", onScroll, { passive: true });
 
 $("#views").addEventListener("click", async (e) => {
   const th = e.target.closest("[data-thread]");
@@ -508,34 +543,47 @@ $("#views").addEventListener("click", async (e) => {
   if (se) return openDetail("session", se.dataset.session);
   const nw = e.target.closest("[data-new]");
   if (nw) return openSheet(nw.dataset.new);
+  if (e.target.closest("[data-compose]")) return openSheet(state.filter !== "all" ? state.filter : null);
   const op = e.target.closest("[data-open]");
   if (op) return openOnMac(op.dataset.open);
-  if (e.target.closest("#signOut")) { await sb.auth.signOut(); location.reload(); }
+  if (e.target.closest("#signOut")) {
+    actionSheet("Sign out of Sai Agents?", [["Sign Out", async () => { await sb.auth.signOut(); location.reload(); }, "danger"]]);
+  }
 });
 
-/* new-task sheet */
+/* ------------------------------------------------------------ new task */
 function renderPicker() {
   $("#appPicker").innerHTML = Object.entries(APPS).map(([id, a]) =>
-    '<button type="button" class="pick" role="radio" data-pick="' + id + '" aria-checked="' + (state.pick === id) + '" style="--c:' + a.color + '">' +
-    glyph(id, true) + a.label + "</button>").join("");
-  $("#pickerNote").textContent = appOf(state.pick).how + (macOnline() ? "" : " · Mac looks offline, it will run when it's back");
+    '<button type="button" class="pick" role="radio" data-pick="' + id + '" aria-checked="' + (state.pick === id) + '">' +
+    icon(id) + a.label + "</button>").join("");
+  $("#pickerNote").textContent = appOf(state.pick).how + (macOnline() ? "" : " · your Mac looks offline, it runs when it's back");
 }
 function openSheet(app) {
   if (app) { state.pick = app; ls.set("agents.pick", app); }
   renderPicker();
-  $("#sheet").hidden = false; $("#sheetBackdrop").hidden = false;
-  setTimeout(() => $("#prompt").focus(), 60);
+  $("#sheetSend").disabled = !$("#prompt").value.trim();
+  const sh = $("#sheet");
+  sh.classList.remove("closing"); sh.style.transform = "";
+  sh.hidden = false; $("#sheetBackdrop").hidden = false; $("#sheetBackdrop").classList.remove("closing");
+  setTimeout(() => $("#prompt").focus(), 350);
 }
-function closeSheet() { $("#sheet").hidden = true; $("#sheetBackdrop").hidden = true; $("#prompt").blur(); }
-$("#fab").addEventListener("click", () => openSheet(state.filter !== "all" ? state.filter : null));
+function closeSheet() {
+  const sh = $("#sheet"), bd = $("#sheetBackdrop");
+  if (sh.hidden) return;
+  $("#prompt").blur();
+  sh.style.transform = ""; sh.classList.add("closing"); bd.classList.add("closing");
+  setTimeout(() => { sh.hidden = true; bd.hidden = true; sh.classList.remove("closing"); bd.classList.remove("closing"); }, 280);
+}
+$("#compose").addEventListener("click", () => openSheet(state.filter !== "all" ? state.filter : null));
 $("#sheetClose").addEventListener("click", closeSheet);
 $("#sheetBackdrop").addEventListener("click", closeSheet);
 $("#appPicker").addEventListener("click", (e) => {
   const b = e.target.closest("[data-pick]");
   if (!b) return;
   state.pick = b.dataset.pick; ls.set("agents.pick", state.pick);
-  renderPicker();
+  tick(); renderPicker();
 });
+$("#prompt").addEventListener("input", () => { $("#sheetSend").disabled = !$("#prompt").value.trim(); });
 $("#sheet").addEventListener("submit", async (e) => {
   e.preventDefault();
   const text = $("#prompt").value.trim();
@@ -543,25 +591,30 @@ $("#sheet").addEventListener("submit", async (e) => {
   $("#sheetSend").disabled = true;
   try {
     const row = await queueTask(state.pick, text);
+    tick();
     $("#prompt").value = "";
     closeSheet();
     state.tab = "runs"; ls.set("agents.tab", "runs");
     render();
     openDetail("thread", row.id);
     soon();
-  } catch (err) { toast("Couldn't send: " + err.message); }
-  finally { $("#sheetSend").disabled = false; }
+  } catch (err) { toast("Couldn't send: " + err.message); $("#sheetSend").disabled = false; }
+});
+$("#prompt").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); $("#sheet").requestSubmit(); }
 });
 
-/* detail: reply, back, menu */
+/* ------------------------------------------------------- detail: reply */
 $("#back").addEventListener("click", () => closeDetail(false));
 const replyText = $("#replyText");
-replyText.addEventListener("input", () => autoGrow(replyText, 140));
+const syncSend = () => { $("#replySend").disabled = !replyText.value.trim(); };
+replyText.addEventListener("input", () => { autoGrow(replyText, 140); syncSend(); });
 replyText.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing && matchMedia("(pointer:fine)").matches) {
     e.preventDefault(); $("#reply").requestSubmit();
   }
 });
+syncSend();
 $("#reply").addEventListener("submit", async (e) => {
   e.preventDefault();
   const text = replyText.value.trim();
@@ -579,18 +632,45 @@ $("#reply").addEventListener("submit", async (e) => {
   $("#replySend").disabled = true;
   try {
     const row = await queueTask(app, text, resume);
+    tick();
     replyText.value = ""; autoGrow(replyText, 140);
     if (!resume && state.detail.kind === "thread") state.detail.key = row.id;
     state.detail.justOpened = true;
     renderDetail();
     soon();
   } catch (err) {
-    toast(/resume_id/.test(err.message) ? "Follow-ups need the updated Supabase schema" : "Couldn't send: " + err.message);
-  } finally { $("#replySend").disabled = false; }
+    toast("Couldn't send: " + err.message);
+  } finally { syncSend(); }
 });
 $("#thread").addEventListener("click", (e) => {
   const f = e.target.closest("[data-full]");
   if (f) { state.full.add(f.dataset.full); renderDetail(); }
+});
+
+/* ---------------------------------------------------------- action sheet */
+function actionSheet(title, items) {
+  const m = $("#menu");
+  m.innerHTML = '<div class="asGroup">' + (title ? '<div class="asTitle">' + esc(title) + "</div>" : "") +
+    items.map((it, i) => '<button data-i="' + i + '" class="' + (it[2] || "") + '">' + esc(it[0]) + "</button>").join("") +
+    '</div><button class="asCancel" data-cancel>Cancel</button>';
+  m._items = items;
+  m.classList.remove("closing"); $("#menuBackdrop").classList.remove("closing");
+  m.hidden = false; $("#menuBackdrop").hidden = false;
+}
+function closeMenu() {
+  const m = $("#menu"), bd = $("#menuBackdrop");
+  if (m.hidden) return;
+  m.classList.add("closing"); bd.classList.add("closing");
+  setTimeout(() => { m.hidden = true; bd.hidden = true; m.classList.remove("closing"); bd.classList.remove("closing"); }, 240);
+}
+$("#menuBackdrop").addEventListener("click", closeMenu);
+$("#menu").addEventListener("click", (e) => {
+  if (e.target.closest("[data-cancel]")) return closeMenu();
+  const b = e.target.closest("[data-i]");
+  if (!b) return;
+  const fn = $("#menu")._items[Number(b.dataset.i)][1];
+  closeMenu();
+  fn();
 });
 
 function menuItems() {
@@ -601,48 +681,158 @@ function menuItems() {
     const t = th.last, a = appOf(th.app);
     const items = [["Open " + a.label + " on Mac", () => openOnMac(th.app)]];
     const withOut = th.items.filter((x) => x.output && x.action !== "open").pop();
-    if (withOut) items.push(["Copy output", async () => { await navigator.clipboard.writeText(withOut.output); toast("Copied"); }]);
+    if (withOut) items.push(["Copy Output", async () => { await navigator.clipboard.writeText(withOut.output); toast("Copied"); }]);
     if (t.action !== "open" && (t.status === "failed" || t.status === "done" || t.status === "manual")) {
-      items.push(["Run again", async () => {
+      items.push(["Run Again", async () => {
         const { error } = await sb.from("tasks").update({ status: "queued", output: "", exit_code: null, updated_at: now() }).eq("id", t.id);
-        if (error) toast(error.message); else { toast("Queued again"); soon(); }
+        if (error) toast(error.message); else { tick(); toast("Queued again"); soon(); }
       }]);
     }
-    items.push(["Delete", async () => {
-      if (!confirm("Delete this run from your history? The session on your Mac is not touched.")) return;
-      const { error } = await sb.from("tasks").delete().in("id", th.items.map((x) => x.id));
-      if (error) return toast(error.message);
-      state.tasks = state.tasks.filter((x) => !th.items.includes(x));
-      closeDetail(false);
+    items.push(["Delete Run", () => {
+      actionSheet("This removes the run from your history. The session on your Mac is not touched.", [["Delete Run", async () => {
+        const { error } = await sb.from("tasks").delete().in("id", th.items.map((x) => x.id));
+        if (error) return toast(error.message);
+        state.tasks = state.tasks.filter((x) => !th.items.includes(x));
+        closeDetail(false);
+      }, "danger"]]);
     }, "danger"]);
     return items;
   }
   const s = currentSession(); if (!s) return [];
   return [
     ["Open " + appOf(s.app).label + " on Mac", () => openOnMac(s.app)],
-    ["Copy session ID", async () => { await navigator.clipboard.writeText(s.session_id); toast("Copied"); }],
+    ["Copy Session ID", async () => { await navigator.clipboard.writeText(s.session_id); toast("Copied"); }],
   ];
 }
-$("#more").addEventListener("click", (e) => {
-  e.stopPropagation();
-  const m = $("#menu");
-  if (!m.hidden) { m.hidden = true; return; }
+$("#more").addEventListener("click", () => {
   const items = menuItems();
-  m.innerHTML = items.map((it, i) => '<button data-i="' + i + '" class="' + (it[2] || "") + '">' + esc(it[0]) + "</button>").join("");
-  m._items = items;
-  m.hidden = !items.length;
+  if (items.length) actionSheet(null, items);
 });
-$("#menu").addEventListener("click", (e) => {
-  const b = e.target.closest("[data-i]");
-  if (!b) return;
-  const m = $("#menu");
-  m.hidden = true;
-  m._items[Number(b.dataset.i)][1]();
-});
-document.addEventListener("click", (e) => { if (!e.target.closest("#menu")) $("#menu").hidden = true; });
-$("#prompt").addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); $("#sheet").requestSubmit(); }
-});
+
+/* -------------------------------------------------------------- gestures */
+// Swipe from the left edge to go back.
+(function swipeBack() {
+  const el = $("#detail");
+  let g = null;
+  el.addEventListener("touchstart", (e) => {
+    const p = e.touches[0];
+    if (p.clientX > 30) return;
+    g = { x: p.clientX, y: p.clientY, t: Date.now(), dx: 0, locked: false };
+  }, { passive: true });
+  el.addEventListener("touchmove", (e) => {
+    if (!g) return;
+    const p = e.touches[0];
+    const dx = p.clientX - g.x, dy = p.clientY - g.y;
+    if (!g.locked) {
+      if (Math.abs(dy) > Math.abs(dx)) { g = null; return; }
+      g.locked = true; el.style.transition = "none";
+    }
+    g.dx = Math.max(0, dx);
+    el.style.transform = "translateX(" + g.dx + "px)";
+  }, { passive: true });
+  el.addEventListener("touchend", () => {
+    if (!g) return;
+    const v = g.dx / Math.max(1, Date.now() - g.t);
+    const go = g.dx > innerWidth * 0.35 || (v > 0.5 && g.dx > 40);
+    el.style.transition = "";
+    el.style.transform = go ? "translateX(100%)" : "";
+    g = null;
+    if (go) setTimeout(() => closeDetail(false), 10);
+  });
+})();
+
+// Drag the sheet's handle down to dismiss it.
+(function sheetDrag() {
+  const sh = $("#sheet"), handle = $("#sheetDrag");
+  let g = null;
+  handle.addEventListener("touchstart", (e) => {
+    if (e.target.closest("button")) return;
+    g = { y: e.touches[0].clientY, dy: 0 }; sh.style.transition = "none";
+  }, { passive: true });
+  handle.addEventListener("touchmove", (e) => {
+    if (!g) return;
+    g.dy = Math.max(0, e.touches[0].clientY - g.y);
+    sh.style.transform = "translateY(" + g.dy + "px)";
+  }, { passive: true });
+  handle.addEventListener("touchend", () => {
+    if (!g) return;
+    sh.style.transition = "";
+    if (g.dy > 120) closeSheet(); else sh.style.transform = "";
+    g = null;
+  });
+})();
+
+// Pull down at the top of a list to refresh.
+(function pullToRefresh() {
+  const ptr = $("#ptr");
+  let g = null;
+  const busy = () => state.detail || !$("#sheet").hidden || !$("#menu").hidden || $("#app").hidden;
+  document.addEventListener("touchstart", (e) => {
+    if (busy() || window.scrollY > 0) { g = null; return; }
+    g = { y: e.touches[0].clientY, d: 0 };
+  }, { passive: true });
+  document.addEventListener("touchmove", (e) => {
+    if (!g) return;
+    g.d = Math.max(0, (e.touches[0].clientY - g.y) * 0.5);
+    ptr.style.transition = "none";
+    ptr.style.height = Math.min(g.d, 80) + "px";
+    ptr.classList.toggle("ready", g.d >= 60);
+  }, { passive: true });
+  document.addEventListener("touchend", async () => {
+    if (!g) return;
+    const ready = g.d >= 60;
+    g = null;
+    ptr.style.transition = "";
+    if (ready) {
+      tick();
+      ptr.style.height = "52px"; ptr.classList.add("loading");
+      await load().catch(() => {});
+    }
+    ptr.classList.remove("loading", "ready");
+    ptr.style.height = "0px";
+  });
+})();
+
+/* ------------------------------------------------- install hint (iOS) */
+// iOS only offers "Add to Home Screen" from Safari's (or Chrome/Edge's) Share
+// menu - never inside another app's built-in browser - so say exactly what to do.
+function installHint(ua) {
+  const ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  const standalone = navigator.standalone || matchMedia("(display-mode: standalone)").matches;
+  if (!ios || standalone || ls.get("agents.installDismissed", false) || $(".install")) return;
+
+  const share = '<svg class="shareGlyph" viewBox="0 0 24 24"><path d="M12 15V3M8 7l4-4 4 4"/><path d="M6 11H5v10h14V11h-1"/></svg>';
+  const inApp = /FBAN|FBAV|Instagram|Line\/|GSA\/|Snapchat|Twitter|LinkedInApp|Slack|Gmail|Outlook|Teams|Claude|wv\)/i.test(ua)
+    || (!/Safari\//.test(ua) && !/CriOS|EdgiOS|FxiOS/.test(ua));
+  const thirdParty = /CriOS|EdgiOS|FxiOS/.test(ua);
+  let html;
+  if (inApp) {
+    html = "<b>Open in Safari to install</b><ol>" +
+      "<li>This app's built-in browser can't add to your Home Screen.</li>" +
+      "<li>Tap <strong>Copy Link</strong>, open <strong>Safari</strong>, paste and go.</li></ol>" +
+      '<button class="btn tinted" data-copy>Copy Link</button>';
+  } else if (thirdParty) {
+    html = "<b>Install on your iPhone</b><ol>" +
+      "<li>Tap " + share + " <strong>Share</strong> in the address bar.</li>" +
+      "<li>Choose <strong>Add to Home Screen</strong>. Not listed? Open this page in Safari.</li></ol>";
+  } else {
+    html = "<b>Install on your iPhone</b><ol>" +
+      "<li>Tap " + share + " <strong>Share</strong> (or <strong>•••</strong> then Share) in Safari.</li>" +
+      "<li>Scroll down and tap <strong>Add to Home Screen</strong>, then <strong>Add</strong>.</li></ol>";
+  }
+  const box = document.createElement("div");
+  box.className = "install";
+  box.innerHTML = '<button class="x" aria-label="Dismiss">✕</button>' + html;
+  document.body.appendChild(box);
+  box.addEventListener("click", async (e) => {
+    if (e.target.closest(".x")) { ls.set("agents.installDismissed", true); box.remove(); return; }
+    if (e.target.closest("[data-copy]")) {
+      try { await navigator.clipboard.writeText(location.origin + location.pathname); toast("Link copied - paste it in Safari"); }
+      catch (err) { prompt("Copy this link and open it in Safari:", location.origin + location.pathname); }
+    }
+  });
+}
+installHint(navigator.userAgent);
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 boot();

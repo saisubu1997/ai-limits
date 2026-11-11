@@ -1,5 +1,5 @@
 // Network-first app shell: always fresh when online, still opens offline.
-const CACHE = "agents-v2";
+const CACHE = "agents-v3";
 const SHELL = ["./", "index.html", "styles.css", "hosted.js", "config.js", "icon-192.png", "icon-512.png", "manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {
