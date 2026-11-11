@@ -54,6 +54,10 @@ RLS policy (or add Supabase auth) if the project is shared.
 
 ## Hosting on Supabase (auth built in)
 
+> Storage serves `.html` as `text/plain` on purpose, so a Storage URL shows source.
+> For a `*.supabase.co` app URL use the Edge Function in `hosted/function/`:
+> `SUPABASE_ACCESS_TOKEN=sbp_... ./hosted/deploy-function.sh` -> `/functions/v1/sai-agents`.
+
 Supabase serves the app from Storage and provides the login.
 
 1. **SQL editor** -> run [`supabase.sql`](../supabase.sql). It creates `public.tasks`
