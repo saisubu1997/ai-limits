@@ -24,3 +24,9 @@ alter table public.tasks enable row level security;
 drop policy if exists "tasks_anon_all" on public.tasks;
 create policy "tasks_anon_all" on public.tasks for all
   using (true) with check (true);
+
+-- Static hosting for the app itself: a public bucket served over HTTPS.
+-- Upload with host-supabase.sh (service_role key, never shipped to clients).
+insert into storage.buckets (id, name, public)
+values ('app', 'app', true)
+on conflict (id) do update set public = true;

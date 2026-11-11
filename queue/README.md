@@ -52,7 +52,34 @@ it up and runs it. Without it everything stays local in `~/.limitswidget/queue.d
 table. That is fine for a private project, but do not publish the key, and tighten the
 RLS policy (or add Supabase auth) if the project is shared.
 
-## Hosted copy (Supabase auth)
+## Hosting on Supabase (auth built in)
+
+Supabase serves the app from Storage and provides the login.
+
+1. **SQL editor** -> run [`supabase.sql`](../supabase.sql). It creates `public.tasks`
+   and the public `app` bucket.
+2. **Publish:**
+
+   ```bash
+   ./host-supabase.sh https://YOUR-PROJECT.supabase.co YOUR_ANON_KEY YOUR_SERVICE_ROLE_KEY
+   ```
+
+   The script inlines the CSS/JS/icons into one HTML file, bakes in the project URL and
+   anon key, uploads it, and prints the public URL:
+   `https://YOUR-PROJECT.supabase.co/storage/v1/object/public/app/sai-agents.html`
+
+3. Open that URL (or add it to your iPhone home screen). Sign in with email/password or
+   a magic link. Tasks go straight to Postgres; the Mac runner picks them up.
+
+Notes:
+* `service_role` is only used for the upload and never leaves your Mac. The anon key is
+  public by design and is embedded in the page.
+* Email confirmation is on by default: confirm the message before the first sign-in, or
+  turn it off under **Authentication -> Providers -> Email**.
+* Point the Mac app at the hosted build with
+  `echo https://YOUR-PROJECT.supabase.co/storage/v1/object/public/app/sai-agents.html > ~/.limitswidget/agents_app_url`.
+
+## Hosted copy (GitHub Pages)
 
 GitHub Pages serves a hosted build of the same UI:
 
