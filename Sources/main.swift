@@ -156,7 +156,11 @@ final class WindowDragController {
         case .leftMouseUp:
             if didMove {
                 let frame = window.frame
-                UserDefaults.standard.set("\(frame.origin.x),\(frame.maxY)", forKey: "panelTop")
+                let middle = (window.screen ?? NSScreen.main)?.visibleFrame.midY ?? frame.midY
+                let bottom = frame.midY < middle
+                UserDefaults.standard.set(bottom ? "bottom" : "top", forKey: "panelEdge")
+                UserDefaults.standard.set(frame.origin.x, forKey: "panelX")
+                UserDefaults.standard.set(bottom ? frame.minY : frame.maxY, forKey: "panelEdgeY")
                 UserDefaults.standard.set("free", forKey: "panelAnchor")
             }
             let consumed = didMove
@@ -308,13 +312,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         var frame = old
         frame.size = NSSize(width: width, height: height)
-        // Deterministic: the top edge stays put, so the card grows downward.
-        frame.origin.y = old.maxY - height
-        // Unless that would push it under the Dock - then hold the bottom edge
-        // and grow upward instead.
-        if frame.minY < safeBottom {
-            frame.origin.y = old.minY
-        }
+        // Keep the plant edge fixed, so changing content never slides the card.
+        frame.origin.y = plantsOnBottom ? old.minY : old.maxY - height
+        if frame.minY < safeBottom { frame.origin.y = safeBottom }
 
         panel.setFrame(frame, display: true, animate: false)
         host.frame = NSRect(x: 0, y: 0, width: width, height: height)
@@ -326,19 +326,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.string(forKey: "panelAnchor") ?? "tr"
     }
 
-    /// Top-left corner in screen coordinates; y is the top edge.
-    private func storedTopLeft() -> NSPoint? {
-        if let saved = UserDefaults.standard.string(forKey: "panelTop") {
-            let parts = saved.split(separator: ",").compactMap { Double($0) }
-            if parts.count == 2 { return NSPoint(x: parts[0], y: parts[1]) }
-        }
-        // Migrate the old bottom-origin value once.
-        if let saved = UserDefaults.standard.string(forKey: "panelOrigin"),
-           let panel {
-            let parts = saved.split(separator: ",").compactMap { Double($0) }
-            if parts.count == 2 { return NSPoint(x: parts[0], y: parts[1] + panel.frame.height) }
-        }
-        return nil
+    /// Cards planted on the lower half of the screen keep their bottom edge and
+    /// grow upward; the rest keep their top edge. Chosen once, when dragged.
+    private var plantsOnBottom: Bool {
+        UserDefaults.standard.string(forKey: "panelEdge") == "bottom"
+    }
+
+    private func savedPlacement() -> NSPoint? {
+        guard let x = UserDefaults.standard.object(forKey: "panelX") as? Double,
+              let edgeY = UserDefaults.standard.object(forKey: "panelEdgeY") as? Double,
+              let panel else { return nil }
+        let y = plantsOnBottom ? edgeY : edgeY - panel.frame.height
+        return NSPoint(x: x, y: y)
     }
 
     private func corner(_ key: String, size: NSSize) -> NSPoint? {
@@ -359,8 +358,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let panel else { return }
         if let point = corner(anchor, size: panel.frame.size) {
             panel.setFrameOrigin(point)
-        } else if let topLeft = storedTopLeft() {
-            panel.setFrameOrigin(NSPoint(x: topLeft.x, y: topLeft.y - panel.frame.height))
+        } else if let saved = savedPlacement() {
+            panel.setFrameOrigin(saved)
         }
         clampToVisibleArea(panel)
     }
