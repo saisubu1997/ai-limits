@@ -9,10 +9,8 @@ func targetURL() -> URL {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty, let url = URL(string: trimmed) { return url }
     }
-    let tokenFile = home.appendingPathComponent(".limitswidget/web_token")
-    let token = (try? String(contentsOf: tokenFile, encoding: .utf8))?
-        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    return URL(string: "http://127.0.0.1:8787/t/\(token)/queue/")!
+    // The hosted app (GitHub Pages + Supabase) - same one the phone uses.
+    return URL(string: "https://saisubu1997.github.io/ai-limits/queue/")!
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate {
@@ -27,7 +25,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         window.title = "Sai Agents"
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        window.backgroundColor = NSColor(calibratedRed: 0.03, green: 0.03, blue: 0.05, alpha: 1)
+        window.backgroundColor = .windowBackgroundColor
+        window.minSize = NSSize(width: 360, height: 560)
         window.setFrameAutosaveName("SaiAgentsWindow")
         window.center()
 
@@ -79,14 +78,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     func webView(_ webView: WKWebView,
                  decidePolicyFor action: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        // The app's own pages stay in the window; other links open in the browser.
         if action.navigationType == .linkActivated, let url = action.request.url,
            let scheme = url.scheme, ["http", "https", "mailto"].contains(scheme),
-           url.host != "127.0.0.1", url.host != "localhost" {
+           url.host != targetURL().host, url.host != "127.0.0.1", url.host != "localhost" {
             NSWorkspace.shared.open(url)
             decisionHandler(.cancel)
             return
         }
         decisionHandler(.allow)
+    }
+
+    // window.alert / confirm / prompt from the page.
+    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+        let alert = NSAlert(); alert.messageText = message
+        alert.runModal(); completionHandler()
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+        let alert = NSAlert(); alert.messageText = message
+        alert.addButton(withTitle: "OK"); alert.addButton(withTitle: "Cancel")
+        completionHandler(alert.runModal() == .alertFirstButtonReturn)
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String,
+                 defaultText: String?, initiatedByFrame frame: WKFrameInfo,
+                 completionHandler: @escaping (String?) -> Void) {
+        let alert = NSAlert(); alert.messageText = prompt
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        field.stringValue = defaultText ?? ""
+        alert.accessoryView = field
+        alert.addButton(withTitle: "OK"); alert.addButton(withTitle: "Cancel")
+        completionHandler(alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
