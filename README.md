@@ -58,6 +58,20 @@ registers two login agents (`com.sai.ailimits`, `com.sai.ailimits.web`).
 Antigravity key). Choose **Always Allow** - the widget only decrypts the token
 your own app already stored, and caches what it needs in `~/.limitswidget`.
 
+The repository ships **no credentials of any kind**. Each card reads the session
+that the corresponding app already keeps on *your* Mac:
+
+| Card | Needs, once | Credential the widget reads |
+|------|-------------|-----------------------------|
+| Claude | Claude Desktop installed and signed in | `~/Library/Application Support/Claude/config.json` + the `Claude Safe Storage` Keychain key |
+| Codex | the Codex app (ChatGPT) or `codex` CLI signed in | `~/.codex/auth.json` |
+| Antigravity | the Antigravity app opened once and signed in | Keychain item `gemini` / `antigravity` |
+| DeepSeek | DeepSeek Harness signed in | `~/.dsh/.credentials.yaml` |
+
+Any card you have not set up simply says so ("Claude Desktop is not set up on
+this Mac") instead of failing, and the others keep working. After signing in to
+an app, right-click the widget -> **Refresh now** (or wait two minutes).
+
 ## Using it
 
 * **Drag** the card anywhere - the whole card is a handle. Corner positions stay
