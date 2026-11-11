@@ -8,6 +8,7 @@ Requirements
 ------------
   * macOS 14 (Sonoma) or newer, Apple Silicon or Intel
   * Python 3 - install with:  xcode-select --install
+  * Optional:  pip3 install --user zstandard   (enables DeepSeek session titles)
   * At least one of these apps installed and SIGNED IN, because the widget
     reads the session each app already keeps on this Mac:
         Claude Desktop, ChatGPT (Codex), Antigravity, DeepSeek Harness

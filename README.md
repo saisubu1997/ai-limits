@@ -122,8 +122,10 @@ and replace the token placeholder.
 * **Waiting for you** is a transcript heuristic: Claude's newest record is an
   unanswered `tool_use`. A slow tool looks the same as a permission prompt.
 * **Antigravity** exposes no session title, so that card keeps the vendor line.
-* **DeepSeek** sessions are zstd-compressed and the session title falls back to
-  the workspace folder name.
+* **DeepSeek** session titles are read from the Harness transcript, which is
+  zstd-compressed: without the optional `zstandard` module
+  (`pip3 install --user zstandard`) the card shows the vendor line instead of a
+  title. The title is only shown while the session is under 30 minutes old.
 * Values are read from local state, so a provider has to have been used at least
   once on this Mac before its card fills in.
 * The Antigravity OAuth client is read out of the installed app at runtime (no

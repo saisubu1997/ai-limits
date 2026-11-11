@@ -273,6 +273,37 @@ def status_antigravity(commands):
             "session_name": None}
 
 
+def deepseek_session_title(session_dir):
+    """The Harness writes a 'session/title' event into its (zstd) transcript."""
+    try:
+        import zstandard as zstd
+    except Exception:
+        return None
+    path = os.path.join(session_dir, "session.v4.jsonl.zstd")
+    try:
+        if os.path.getsize(path) > 60_000_000:
+            return None
+        with open(path, "rb") as fh:
+            # read() with no size: stream_reader.read(n) returns partial frames.
+            raw = zstd.ZstdDecompressor().stream_reader(fh).read()
+    except Exception:
+        return None
+
+    title = None
+    for line in raw.decode("utf-8", "replace").splitlines():
+        if "session/title" not in line:
+            continue
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        if rec.get("type") == "session/title":
+            candidate = (rec.get("data") or {}).get("title")
+            if candidate:
+                title = candidate
+    return short_name(title, 40)
+
+
 def status_deepseek(commands):
     roots = glob.glob(os.path.join(HOME, ".dsh/sessions/*/session-*"))
     active = [d for d in roots if time.time() - mtime(d) < 1800]
@@ -281,9 +312,9 @@ def status_deepseek(commands):
     name = None
     if roots:
         newest_dir = max(roots, key=mtime)
-        slug = os.path.basename(os.path.dirname(newest_dir)).strip("-")
-        parts = slug.split("-")
-        name = short_name("-".join(parts[-2:]) if len(parts) > 1 else slug)
+        # Only claim a title while the session is recent; otherwise show the vendor.
+        if time.time() - mtime(newest_dir) < 1800:
+            name = deepseek_session_title(newest_dir)
     return {"running": is_running("DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness", commands),
             "sessions": len(active), "state": state, "session_name": name}
 
