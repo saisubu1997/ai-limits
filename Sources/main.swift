@@ -416,14 +416,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func openProvider(_ id: String) {
-        let paths: [String: String] = [
-            "claude": "/Applications/Claude.app",
-            "codex": "/Applications/ChatGPT.app",
-            "antigravity": "/Applications/Antigravity.app",
-            "deepseek": "/Applications/DeepSeek Harness.app",
-        ]
-        guard let path = paths[id] else { return }
-        NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: path),
+        guard let url = AppIcons.appURL(for: id) else { return }
+        NSWorkspace.shared.openApplication(at: url,
                                            configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
     }
 }

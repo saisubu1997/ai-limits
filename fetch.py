@@ -76,12 +76,12 @@ def keychain_secret(service):
 
 
 def claude_aes_key():
-    """Return the 16-byte safeStorage key, caching it after one keychain read.
+    """The 16-byte safeStorage key, cached by the app on its first launch.
 
-    macOS throttles repeated `security` lookups, so the derived key is stored
-    beside the cache with 0600 permissions and reused from then on.
+    Deliberately never touches the Keychain here: this runs every two minutes,
+    and a Keychain prompt from a background fetch would be noise. The Swift app
+    reads it once at launch and writes this file.
     """
-    import hashlib
     key_path = os.path.join(DATA_HOME, "claude_aes_key")
     try:
         stored = open(key_path).read().strip()
@@ -89,18 +89,7 @@ def claude_aes_key():
             return bytes.fromhex(stored)
     except Exception:
         pass
-    password = keychain_secret("Claude Safe Storage")
-    if not password:
-        return None
-    key = hashlib.pbkdf2_hmac("sha1", password.encode(), b"saltysalt", 1003, 16)
-    try:
-        os.makedirs(DATA_HOME, exist_ok=True)
-        with open(key_path, "w") as fh:
-            fh.write(key.hex())
-        os.chmod(key_path, 0o600)
-    except Exception:
-        pass
-    return key
+    return None
 
 
 def electron_decrypt(blob_b64, key):
@@ -303,10 +292,13 @@ def claude_provider(status=None):
     out = empty_provider("claude", "Claude", "Anthropic", None)
     out["status"] = status
     cfg_path = os.path.join(HOME, "Library/Application Support/Claude/config.json")
+    if not os.path.exists(cfg_path):
+        out["error"] = "Claude Desktop is not set up on this Mac"
+        return out
     try:
         cfg = json.load(open(cfg_path))
-    except Exception as e:
-        out["error"] = "Claude Desktop config not readable (%s)" % e
+    except Exception:
+        out["error"] = "Claude Desktop config could not be read"
         return out
 
     blob = cfg.get("oauth:tokenCacheV2") or cfg.get("oauth:tokenCache")
@@ -316,7 +308,7 @@ def claude_provider(status=None):
 
     key = claude_aes_key()
     if not key:
-        out["error"] = "Keychain access for Claude needed once - run the app sign-in"
+        out["error"] = "Restart AI Limits and allow Keychain access for Claude"
         return out
 
     try:
@@ -408,10 +400,13 @@ def codex_provider(status=None):
     out = empty_provider("codex", "Codex", "OpenAI", None)
     out["status"] = status
     auth_path = os.path.join(HOME, ".codex/auth.json")
+    if not os.path.exists(auth_path):
+        out["error"] = "Codex is not signed in on this Mac"
+        return out
     try:
         auth = json.load(open(auth_path))
-    except Exception as e:
-        out["error"] = "Codex is not signed in (%s)" % e
+    except Exception:
+        out["error"] = "Codex credentials could not be read"
         return out
 
     tokens = auth.get("tokens") or {}
@@ -537,8 +532,6 @@ def antigravity_secret():
     except Exception:
         pass
     if not raw:
-        raw = keychain_secret("gemini")
-    if not raw:
         return None
     if raw.startswith("go-keyring-base64:"):
         raw = raw.split(":", 1)[1]
@@ -619,7 +612,7 @@ def antigravity_provider(status=None):
     out["status"] = status
     access, refresh, expiry = antigravity_tokens()
     if not access and not refresh:
-        out["error"] = "Open the Antigravity app once so it can sign in"
+        out["error"] = "Open the Antigravity app once, then restart AI Limits"
         return out
 
     status, body = antigravity_quota(access or "")
@@ -684,10 +677,13 @@ def deepseek_provider(status=None):
     out = empty_provider("deepseek", "DeepSeek", "Harness", None)
     out["status"] = status
     cred_path = os.path.join(HOME, ".dsh/.credentials.yaml")
+    if not os.path.exists(cred_path):
+        out["error"] = "DeepSeek Harness is not signed in on this Mac"
+        return out
     try:
         text = open(cred_path).read()
-    except Exception as e:
-        out["error"] = "DeepSeek Harness credentials not readable (%s)" % e
+    except Exception:
+        out["error"] = "DeepSeek Harness credentials could not be read"
         return out
 
     m = re.search(r"deepseek-account-platform/default:(.*?)(?:\n\s{2}\S|\Z)", text, re.S)

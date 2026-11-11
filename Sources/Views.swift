@@ -25,7 +25,15 @@ enum Palette {
 // MARK: - App icons
 
 enum AppIcons {
-    static let paths: [String: String] = [
+    /// Bundle identifiers first: users may keep these apps outside /Applications.
+    static let bundleIDs: [String: String] = [
+        "claude": "com.anthropic.claudefordesktop",
+        "codex": "com.openai.codex",
+        "antigravity": "com.google.antigravity",
+        "deepseek": "com.deepseek.dsh",
+    ]
+
+    static let fallbackPaths: [String: String] = [
         "claude": "/Applications/Claude.app",
         "codex": "/Applications/ChatGPT.app",
         "antigravity": "/Applications/Antigravity.app",
@@ -34,10 +42,21 @@ enum AppIcons {
 
     private static var cache: [String: NSImage] = [:]
 
+    static func appURL(for id: String) -> URL? {
+        if let bundleID = bundleIDs[id],
+           let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+            return url
+        }
+        if let path = fallbackPaths[id], FileManager.default.fileExists(atPath: path) {
+            return URL(fileURLWithPath: path)
+        }
+        return nil
+    }
+
     static func icon(for id: String) -> NSImage? {
         if let hit = cache[id] { return hit }
-        guard let path = paths[id] else { return nil }
-        let image = NSWorkspace.shared.icon(forFile: path)
+        guard let url = appURL(for: id) else { return nil }
+        let image = NSWorkspace.shared.icon(forFile: url.path)
         image.size = NSSize(width: 64, height: 64)
         cache[id] = image
         return image
@@ -259,11 +278,12 @@ struct ProviderCard: View {
     }
 
     @ViewBuilder private var openButton: some View {
-        if let icon = AppIcons.icon(for: provider.id) {
-            Button {
-                onOpen(provider.id)
-            } label: {
-                Image(nsImage: icon)
+        Button {
+            onOpen(provider.id)
+        } label: {
+            Group {
+                if let icon = AppIcons.icon(for: provider.id) {
+                    Image(nsImage: icon)
                     .resizable()
                     .interpolation(.high)
                     .frame(width: 17, height: 17)
@@ -273,10 +293,16 @@ struct ProviderCard: View {
                             .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.6)
                     )
                     .opacity(0.95)
+                } else {
+                    Image(systemName: "arrow.up.forward.app")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 17, height: 17)
+                }
             }
-            .buttonStyle(.plain)
-            .help("Open " + provider.name)
         }
+        .buttonStyle(.plain)
+        .help("Open " + provider.name)
     }
 
     private var subtitle: String {
