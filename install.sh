@@ -76,8 +76,33 @@ EOF
 
 launchctl bootstrap "gui/$(id -u)" "$WEB_PLIST" 2>/dev/null || launchctl load -w "$WEB_PLIST"
 
+QUEUE_PLIST="$HOME/Library/LaunchAgents/com.sai.ailimits.queue.plist"
+launchctl bootout "gui/$(id -u)/com.sai.ailimits.queue" 2>/dev/null || true
+cat > "$QUEUE_PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.sai.ailimits.queue</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>$DEST/Contents/Resources/queue/server.py</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>LimitLoadToSessionType</key><string>Aqua</string>
+</dict>
+</plist>
+EOF
+launchctl bootstrap "gui/$(id -u)" "$QUEUE_PLIST" 2>/dev/null \
+  || launchctl load -w "$QUEUE_PLIST" 2>/dev/null || true
+sleep 1
+launchctl kickstart -k "gui/$(id -u)/com.sai.ailimits.queue" 2>/dev/null || true
+
 HOST="$(scutil --get LocalHostName 2>/dev/null || hostname -s)"
 echo "installed $DEST"
+echo "work queue: http://$HOST.local:8787/t/$TOKEN/queue/"
 echo "phone bridge: http://$HOST.local:8787/t/$TOKEN/"
 
 # ---- optional public tunnel (cloudflared quick tunnel) ----------------------

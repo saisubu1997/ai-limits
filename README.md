@@ -95,6 +95,23 @@ There is also a [Scriptable](https://scriptable.app) widget in
 [`ios/ailimits.js`](ios/ailimits.js) for a real home-screen widget - paste it in
 and replace the token placeholder.
 
+## Work queue (PWA)
+
+The same bridge also serves a phone-first work queue: describe a task, pick a model,
+and the Mac runs it with that app's own CLI while the output streams back into the card.
+
+<img src="docs/queue.png" width="300" alt="Work queue on a phone">
+
+```
+http://<your-mac>.local:8787/t/<token>/queue/
+```
+
+Claude and Codex run headlessly (Claude uses the OAuth token already stored by Claude
+Desktop; Codex uses its own `auth.json`). Antigravity and DeepSeek ship no CLI, so those
+tasks are marked **Manual** rather than pretending to run. Optional Supabase sync lets a
+task queued on the phone be picked up and executed by the Mac - see
+[`queue/README.md`](queue/README.md) and [`supabase.sql`](supabase.sql).
+
 ## Privacy and security
 
 * Everything runs locally. Nothing is uploaded to any server - the widget calls
@@ -122,6 +139,8 @@ and replace the token placeholder.
 * **Waiting for you** is a transcript heuristic: Claude's newest record is an
   unanswered `tool_use`. A slow tool looks the same as a permission prompt.
 * **Antigravity** exposes no session title, so that card keeps the vendor line.
+* **The work queue** can only drive apps that ship a CLI. Antigravity and DeepSeek
+  desktop apps cannot be scripted, so those tasks are queued as manual.
 * **DeepSeek** session titles are read from the Harness transcript, which is
   zstd-compressed: without the optional `zstandard` module
   (`pip3 install --user zstandard`) the card shows the vendor line instead of a

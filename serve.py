@@ -83,6 +83,8 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 header { display: flex; align-items: baseline; justify-content: space-between; margin: 6px 2px 14px; }
+.hright { display: flex; gap: 10px; align-items: baseline; }
+.qlink { font-size: 12px; color: #8ea0ff; text-decoration: none; font-weight: 600; }
 h1 { font-size: 26px; margin: 0; letter-spacing: -.02em; }
 #updated { font-size: 12px; color: #8e8e93; font-variant-numeric: tabular-nums; }
 .card { background: var(--card); border: .5px solid var(--line); border-radius: 18px;
@@ -106,7 +108,7 @@ h1 { font-size: 26px; margin: 0; letter-spacing: -.02em; }
 footer { text-align: center; color: #63636b; font-size: 11px; margin-top: 18px; line-height: 1.5; }
 </style>
 </head><body>
-<header><h1>Limits</h1><span id="updated"></span></header>
+<header><h1>Limits</h1><div class="hright"><span id="updated"></span><a class="qlink" href="queue/">Queue</a></div></header>
 <div id="cards"></div>
 <footer>Updates every 2 minutes from your Mac.<br>Add to Home Screen for a full-screen app.</footer>
 <script>
@@ -177,8 +179,60 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) refr
 """
 
 
+QUEUE_PORT = int(os.environ.get("AILIMITS_QUEUE_PORT") or 8790)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "AILimitsWeb/1.0"
+
+    def _proxy_queue(self, method):
+        """Forward /t/<token>/queue/* to the work-queue service."""
+        import http.client
+        split = urllib.parse.urlsplit(self.path)
+        prefix = BASE + "queue"
+        if not split.path.startswith(prefix):
+            return False
+        target = "/t/" + TOKEN + "/" + split.path[len(prefix):].lstrip("/")
+        if split.query:
+            target += "?" + split.query
+        body = b""
+        if method in ("POST", "PATCH"):
+            body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        headers = {}
+        if self.headers.get("Content-Type"):
+            headers["Content-Type"] = self.headers["Content-Type"]
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", QUEUE_PORT, timeout=120)
+            conn.request(method, target, body=body, headers=headers)
+            resp = conn.getresponse()
+            payload = resp.read()
+        except Exception:
+            self._send(502, json.dumps({"error": "queue service is not running"}))
+            return True
+        self.send_response(resp.status)
+        self.send_header("Content-Type", resp.getheader("Content-Type") or "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(payload)
+        return True
+
+    def do_POST(self):
+        if self._proxy_queue("POST"):
+            return
+        self._send(404, json.dumps({"error": "not found"}))
+
+    def do_DELETE(self):
+        if self._proxy_queue("DELETE"):
+            return
+        self._send(404, json.dumps({"error": "not found"}))
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Headers", "content-type")
+        self.send_header("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
+        self.end_headers()
 
     def log_message(self, fmt, *args):
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
@@ -194,6 +248,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def do_GET(self):
+        if self._proxy_queue("GET"):
+            return
         path = urllib.parse.urlsplit(self.path).path
         if path in ("/", ""):
             self.send_response(302)

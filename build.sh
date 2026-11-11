@@ -15,6 +15,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$ROOT/Sources/Info.plist" "$APP/Contents/Info.plist"
 cp "$ROOT/fetch.py" "$APP/Contents/Resources/fetch.py"
 cp "$ROOT/serve.py" "$APP/Contents/Resources/serve.py"
+cp -R "$ROOT/queue" "$APP/Contents/Resources/queue"
 
 SRC=("$ROOT/Sources/main.swift" "$ROOT/Sources/Model.swift" "$ROOT/Sources/Views.swift")
 COMMON=(-O -swift-version 5 -module-cache-path "$BUILD/mc"
