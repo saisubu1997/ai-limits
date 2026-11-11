@@ -52,6 +52,29 @@ it up and runs it. Without it everything stays local in `~/.limitswidget/queue.d
 table. That is fine for a private project, but do not publish the key, and tighten the
 RLS policy (or add Supabase auth) if the project is shared.
 
+## Hosted copy (Supabase auth)
+
+GitHub Pages serves a hosted build of the same UI:
+
+**https://saisubu1997.github.io/ai-limits/queue/**
+
+It talks to Supabase instead of the Mac, so it works anywhere. Flow:
+
+1. Open the page, paste your project **URL** and **anon key** (the setup card).
+2. **Create account** -> confirm the email (Supabase sends it) -> **Sign in**.
+3. Queue tasks on the phone; they land in `public.tasks` with `status='queued'`.
+4. The Mac, connected to the same project (`./connect-supabase.sh`), pulls them every
+   8 seconds, runs the CLI, and pushes the output back.
+5. "Open app" from the hosted UI writes a row with `action='open'`; the Mac executes it.
+
+Notes:
+
+* The anon key is public by design; the `service_role` key must never be pasted anywhere.
+* Email confirmation is on by default in new Supabase projects - confirm before signing in,
+  or turn it off in **Authentication -> Providers -> Email**.
+* The bundled RLS policy is permissive so the unauthenticated Mac runner can write. Tighten
+  it (and give the runner its own account) before sharing the project.
+
 ## Requirements
 
 * macOS with the limits widget installed (`../install.sh`)
