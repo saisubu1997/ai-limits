@@ -386,7 +386,10 @@ def supabase_request(method, path, body=None):
     url = get_setting("supabase_url").rstrip("/") + path
     key = get_setting("supabase_key")
     headers = {"apikey": key, "Authorization": "Bearer " + key,
-               "Content-Type": "application/json"}
+               "Content-Type": "application/json",
+               # Without this PostgREST rejects the upsert with 409 and every
+               # status change after the first insert is silently dropped.
+               "Prefer": "resolution=merge-duplicates,return=minimal"}
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
