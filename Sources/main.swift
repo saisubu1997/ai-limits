@@ -148,13 +148,15 @@ final class WindowDragController {
         case .leftMouseDragged:
             guard let origin = startOrigin, let mouse = startMouse else { return false }
             let now = NSEvent.mouseLocation
-            window.setFrameOrigin(NSPoint(x: origin.x + (now.x - mouse.x),
-                                          y: origin.y + (now.y - mouse.y)))
+            let target = NSPoint(x: origin.x + (now.x - mouse.x),
+                                 y: origin.y + (now.y - mouse.y))
+            window.setFrameOrigin(target)
+            clampToVisibleArea(window)
             didMove = true
         case .leftMouseUp:
             if didMove {
-                let origin = window.frame.origin
-                UserDefaults.standard.set("\(origin.x),\(origin.y)", forKey: "panelOrigin")
+                let frame = window.frame
+                UserDefaults.standard.set("\(frame.origin.x),\(frame.maxY)", forKey: "panelTop")
                 UserDefaults.standard.set("free", forKey: "panelAnchor")
             }
             let consumed = didMove
@@ -166,6 +168,32 @@ final class WindowDragController {
             break
         }
         return false
+    }
+}
+
+// MARK: - Screen clamping
+
+/// Keeps the card fully inside the usable area, so it can never end up behind
+/// the Dock or off the edge when its height changes.
+func clampToVisibleArea(_ window: NSWindow, origin: NSPoint? = nil) {
+    guard let area = (window.screen ?? NSScreen.main)?.visibleFrame else { return }
+    let margin: CGFloat = 6
+    let safe = area.insetBy(dx: margin, dy: margin)
+    var frame = window.frame
+    if let proposed = origin { frame.origin = proposed }
+
+    if frame.height <= safe.height {
+        if frame.maxY > safe.maxY { frame.origin.y = safe.maxY - frame.height }
+        if frame.minY < safe.minY { frame.origin.y = safe.minY }
+    } else {
+        frame.origin.y = safe.maxY - frame.height      // taller than the screen: keep the top
+    }
+    if frame.width <= safe.width {
+        if frame.maxX > safe.maxX { frame.origin.x = safe.maxX - frame.width }
+        if frame.minX < safe.minX { frame.origin.x = safe.minX }
+    }
+    if frame.origin != window.frame.origin {
+        window.setFrameOrigin(frame.origin)
     }
 }
 
@@ -274,14 +302,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let fitting = host.fittingSize
         let height = max(140, ceil(fitting.height))
         guard abs(panel.frame.height - height) > 0.5 else { return }
-        var frame = panel.frame
-        let top = frame.maxY
-        frame.size.height = height
-        frame.size.width = width
-        frame.origin.y = top - height
+
+        let old = panel.frame
+        let safeBottom = ((panel.screen ?? NSScreen.main)?.visibleFrame.minY ?? 0) + 6
+
+        var frame = old
+        frame.size = NSSize(width: width, height: height)
+        // Deterministic: the top edge stays put, so the card grows downward.
+        frame.origin.y = old.maxY - height
+        // Unless that would push it under the Dock - then hold the bottom edge
+        // and grow upward instead.
+        if frame.minY < safeBottom {
+            frame.origin.y = old.minY
+        }
+
         panel.setFrame(frame, display: true, animate: false)
         host.frame = NSRect(x: 0, y: 0, width: width, height: height)
-        if anchor != "free" { restorePosition() }
+        if anchor != "free" { restorePosition() } else { clampToVisibleArea(panel) }
     }
 
     /// "tr", "tl", "br", "bl", "cr" or "free" when the user dragged it somewhere.
@@ -289,11 +326,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.string(forKey: "panelAnchor") ?? "tr"
     }
 
-    private func storedOrigin() -> NSPoint? {
-        guard let saved = UserDefaults.standard.string(forKey: "panelOrigin") else { return nil }
-        let parts = saved.split(separator: ",").compactMap { Double($0) }
-        guard parts.count == 2 else { return nil }
-        return NSPoint(x: parts[0], y: parts[1])
+    /// Top-left corner in screen coordinates; y is the top edge.
+    private func storedTopLeft() -> NSPoint? {
+        if let saved = UserDefaults.standard.string(forKey: "panelTop") {
+            let parts = saved.split(separator: ",").compactMap { Double($0) }
+            if parts.count == 2 { return NSPoint(x: parts[0], y: parts[1]) }
+        }
+        // Migrate the old bottom-origin value once.
+        if let saved = UserDefaults.standard.string(forKey: "panelOrigin"),
+           let panel {
+            let parts = saved.split(separator: ",").compactMap { Double($0) }
+            if parts.count == 2 { return NSPoint(x: parts[0], y: parts[1] + panel.frame.height) }
+        }
+        return nil
     }
 
     private func corner(_ key: String, size: NSSize) -> NSPoint? {
@@ -314,9 +359,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let panel else { return }
         if let point = corner(anchor, size: panel.frame.size) {
             panel.setFrameOrigin(point)
-        } else if let saved = storedOrigin() {
-            panel.setFrameOrigin(saved)
+        } else if let topLeft = storedTopLeft() {
+            panel.setFrameOrigin(NSPoint(x: topLeft.x, y: topLeft.y - panel.frame.height))
         }
+        clampToVisibleArea(panel)
     }
 
     private func contextMenu() -> NSMenu {
