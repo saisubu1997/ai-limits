@@ -150,8 +150,8 @@ function renderDashboard() {
       stateLabel = "Working";
       stateClass = "working";
     } else if (p && p.status && p.status.running) {
-      stateLabel = "Running";
-      stateClass = "running";
+      stateLabel = "Ready";
+      stateClass = "ready";
     } else if (p && !p.ok && p.error) {
       stateLabel = "Offline";
       stateClass = "error";
@@ -160,6 +160,9 @@ function renderDashboard() {
     const planTag = (p && p.plan) ? '<span class="planBadge">' + esc(p.plan.toUpperCase()) + '</span>' : '';
     const vendorLabel = (p && p.vendor) ? p.vendor : meta.vendor;
     const activityIndicator = (stateClass === "working") ? '<span class="activityBars"><span></span><span></span><span></span></span>' : '';
+    const robotWorkBanner = (stateClass === "working")
+      ? '<div class="cardRobotWork"><span class="workBotIcon">🤖</span><span class="workBotText">' + esc(meta.label) + ' is executing task on your Mac…</span><span class="botWave"><span></span><span></span><span></span></span></div>'
+      : '';
 
     html += '<article class="dashCard is-' + stateClass + '" data-model="' + key + '">' +
       '<div class="dashHead">' +
@@ -171,7 +174,8 @@ function renderDashboard() {
           '<span class="dashVendor">' + esc(vendorLabel) + '</span>' +
         '</div>' +
         '<span class="dashBadge ' + stateClass + '"><i></i>' + stateLabel + activityIndicator + '</span>' +
-      '</div>';
+      '</div>' +
+      robotWorkBanner;
 
     // Metrics / credit bars
     if (p && p.metrics && p.metrics.length > 0) {
@@ -179,7 +183,11 @@ function renderDashboard() {
       p.metrics.forEach(function (m) {
         const remaining = m.remaining_pct != null ? m.remaining_pct : (m.used_pct != null ? 100 - m.used_pct : null);
         const resetStr = formatReset(m.reset_at);
-        const sub = [m.sublabel, resetStr].filter(Boolean).join(" · ");
+        let cleanSublabel = m.sublabel || "";
+        if (key === "antigravity" && cleanSublabel.includes("Claude/GPT")) {
+          cleanSublabel = cleanSublabel.replace("Claude/GPT", "Claude & GPT in Antigravity");
+        }
+        const sub = [cleanSublabel, resetStr].filter(Boolean).join(" · ");
 
         // Color coding: green if > 40%, amber if 15-40%, red if < 15%
         let barColor = "#3ddc84";
@@ -257,6 +265,8 @@ function renderTasks() {
     if (t.status === "queued") {
       const pos = t.queue_position != null ? ("#" + t.queue_position + " in queue") : "Queued";
       qBadge = '<span class="queuePos">' + pos + '</span>';
+    } else if (t.status === "running") {
+      qBadge = '<span class="queuePos running"><span class="botSpin">🤖</span> Running</span>';
     }
 
     const out = isOpen && raw
@@ -327,6 +337,10 @@ function renderSessions() {
 }
 
 function render() {
+  const anyRunning = tasks.some(function (t) { return t.status === "running"; });
+  const logo = $("#robotLogo");
+  if (logo) logo.classList.toggle("is-working", anyRunning);
+
   if (tab === "dashboard") renderDashboard();
   else if (tab === "tasks") renderTasks();
   else renderSessions();
