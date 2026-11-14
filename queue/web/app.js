@@ -159,8 +159,9 @@ function renderDashboard() {
 
     const planTag = (p && p.plan) ? '<span class="planBadge">' + esc(p.plan.toUpperCase()) + '</span>' : '';
     const vendorLabel = (p && p.vendor) ? p.vendor : meta.vendor;
+    const activityIndicator = (stateClass === "working") ? '<span class="activityBars"><span></span><span></span><span></span></span>' : '';
 
-    html += '<article class="dashCard" data-model="' + key + '">' +
+    html += '<article class="dashCard is-' + stateClass + '" data-model="' + key + '">' +
       '<div class="dashHead">' +
         '<div class="avatar" style="background:' + meta.color + '">' + meta.initial + '</div>' +
         '<div class="dashTitleGroup">' +
@@ -169,7 +170,7 @@ function renderDashboard() {
           '</div>' +
           '<span class="dashVendor">' + esc(vendorLabel) + '</span>' +
         '</div>' +
-        '<span class="dashBadge ' + stateClass + '"><i></i>' + stateLabel + '</span>' +
+        '<span class="dashBadge ' + stateClass + '"><i></i>' + stateLabel + activityIndicator + '</span>' +
       '</div>';
 
     // Metrics / credit bars
