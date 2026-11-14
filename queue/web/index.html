@@ -15,7 +15,33 @@
 <div class="shell">
   <header class="top">
     <div class="brand">
-      <span class="logo"></span>
+      <div class="logo robotLogo" id="robotLogo" aria-label="Sai Agents Robot">
+        <svg viewBox="0 0 36 36" width="36" height="36" class="robotSvg">
+          <!-- Antenna -->
+          <line x1="18" y1="8" x2="18" y2="2.5" stroke="#7b86ff" stroke-width="2" stroke-linecap="round"/>
+          <circle cx="18" cy="2.5" r="2.2" class="botAntenna" fill="#528cf7"/>
+          <!-- Ears -->
+          <rect x="2.5" y="15" width="3" height="8" rx="1.5" class="botEar" fill="#5466f2"/>
+          <rect x="30.5" y="15" width="3" height="8" rx="1.5" class="botEar" fill="#5466f2"/>
+          <!-- Head Base -->
+          <rect x="5.5" y="8" width="25" height="23" rx="7" class="botHead" fill="url(#botGrad)" stroke="rgba(255,255,255,0.18)" stroke-width="1"/>
+          <!-- Screen / Visor -->
+          <rect x="8.5" y="12" width="19" height="11" rx="4.5" class="botVisor" fill="#090b14" stroke="rgba(111,124,255,0.3)" stroke-width="0.8"/>
+          <!-- Scanner bar (glowing sweep when working) -->
+          <line x1="10" y1="17.5" x2="26" y2="17.5" class="botScanner" stroke="#3ddc84" stroke-width="2" stroke-linecap="round" opacity="0"/>
+          <!-- Eyes -->
+          <circle cx="13.5" cy="17.5" r="2.3" class="botEye eyeLeft" fill="#3ddc84"/>
+          <circle cx="22.5" cy="17.5" r="2.3" class="botEye eyeRight" fill="#3ddc84"/>
+          <!-- Mouth / Smile -->
+          <path d="M 14.5 26.5 Q 18 28.5 21.5 26.5" class="botMouth" fill="none" stroke="#7b86ff" stroke-width="1.6" stroke-linecap="round"/>
+          <defs>
+            <linearGradient id="botGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#212642"/>
+              <stop offset="100%" stop-color="#101322"/>
+            </linearGradient>
+          </defs>
+        </svg>
+      </div>
       <div>
         <h1>Sai Agents</h1>
         <p id="sub">connecting…</p>
