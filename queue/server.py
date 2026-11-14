@@ -40,6 +40,9 @@ MODELS = {
     "deepseek": {"label": "DeepSeek", "runnable": True},
 }
 
+# Per-model worker locks (replaces the single global WORKER lock).
+WORKERS = {model: threading.Lock() for model in MODELS}
+
 # dsh's headless profile ships with account sign-in switched off and defaults to
 # an API key. This overlay (passed with --patch, the user's profiles are left
 # alone) turns the desktop app's DeepSeek account sign-in back on.
@@ -467,14 +470,114 @@ def update(task_id, status=None, exit_code=None, output_append=None, session_ref
         push_to_supabase(row)
 
 
-WORKER = threading.Lock()
+# ---------------------------------------------------------------- capacity + per-model queue
+
+def has_capacity(model):
+    """Return True if the given model has enough credits to run a task.
+
+    Reads ~/.limitswidget/data.json (written by the limits widget fetch.py).
+    For DeepSeek, uses value_text (dollar balance) — capacity if balance > $0.10.
+    For all others, checks both session and weekly remaining_pct >= threshold.
+    If data.json doesn't exist or the provider isn't found, returns True (optimistic).
+    """
+    threshold = float(get_setting("queue_min_remaining") or "10.0")
+    data_path = os.path.join(DATA_DIR, "data.json")
+    try:
+        with open(data_path) as fh:
+            data = json.load(fh)
+    except Exception:
+        return True  # optimistic: file missing or unreadable
+
+    providers = data.get("providers") or []
+    provider = None
+    for p in providers:
+        if p.get("id") == model:
+            provider = p
+            break
+    if provider is None:
+        return True  # provider not found — optimistic
+
+    # DeepSeek uses a dollar balance tracked in value_text
+    if model == "deepseek":
+        for metric in (provider.get("metrics") or []):
+            vt = metric.get("value_text") or ""
+            # e.g. "$1.23" or "1.23"
+            try:
+                balance = float(vt.replace("$", "").replace(",", "").strip())
+                return balance > 0.10
+            except Exception:
+                pass
+        return True  # can't parse — optimistic
+
+    # All other models: check remaining_pct on both session and weekly
+    metrics = provider.get("metrics") or []
+    for metric in metrics:
+        pct = metric.get("remaining_pct")
+        if pct is not None:
+            try:
+                if float(pct) < threshold:
+                    return False
+            except Exception:
+                pass
+    return True
 
 
-def enqueue(task_id):
-    def job():
-        with WORKER:
-            run_task(task_id)
-    threading.Thread(target=job, daemon=True).start()
+def enqueue(task_id=None):
+    """Trigger the queue runner to start any ready tasks that have capacity."""
+    drain_queue()
+
+
+def drain_queue():
+    """Try to start the first queued task for each model that has capacity and a free worker.
+
+    Safe to call repeatedly — uses non-blocking lock acquisition so it never
+    blocks if a task is already running for that model.
+    """
+    con = db()
+    rows = con.execute(
+        "SELECT id, model FROM tasks WHERE status='queued' ORDER BY created_at ASC"
+    ).fetchall()
+    con.close()
+
+    # Group by model, keeping FIFO order
+    by_model = {}
+    for row in rows:
+        m = row["model"]
+        if m not in by_model:
+            by_model[m] = []
+        by_model[m].append(row["id"])
+
+    for model, task_ids in by_model.items():
+        lock = WORKERS.get(model)
+        if lock is None:
+            continue
+        # Non-blocking check: if lock is held, a task is already running
+        acquired = lock.acquire(blocking=False)
+        if not acquired:
+            continue
+        # Lock is free — check capacity before releasing and spawning
+        try:
+            if not has_capacity(model):
+                continue
+            task_id = task_ids[0]
+
+            def job(tid=task_id, lk=lock):
+                # We already hold the lock — run the task, then release
+                try:
+                    run_task(tid)
+                finally:
+                    lk.release()
+                    drain_queue()
+
+            # Transfer lock ownership to the new thread
+            t = threading.Thread(target=job, daemon=True)
+            t.start()
+            # Mark that we handed off the lock (don't release in finally)
+            acquired = False
+        finally:
+            if acquired:
+                lock.release()
+
 
 # ---------------------------------------------------------------- Supabase
 # The Mac talks to Supabase with the service_role key when it has one (it never
@@ -801,6 +904,11 @@ def read_limits():
 def sync_loop():
     tick = 0
     while True:
+        # Always drain the queue on every tick (capacity-gated, per-model)
+        try:
+            drain_queue()
+        except Exception as exc:
+            sys.stderr.write("sync drain_queue: %s\n" % exc)
         for job in (pull_from_supabase, heartbeat) + ((push_sessions,) if tick % 4 == 0 else ()):
             try:
                 if supabase_configured():
@@ -811,8 +919,11 @@ def sync_loop():
         time.sleep(8)
 
 
-def task_json(row):
-    return {k: row[k] for k in row.keys()}
+def task_json(row, queue_positions=None):
+    d = {k: row[k] for k in row.keys()}
+    if queue_positions is not None:
+        d["queue_position"] = queue_positions.get(row["id"])
+    return d
 
 
 PAGE_FILES = {"", "index.html", "app.js", "styles.css", "manifest.webmanifest",
@@ -856,8 +967,30 @@ class Handler(BaseHTTPRequestHandler):
         if rest == "api/tasks":
             con = db()
             rows = con.execute("SELECT * FROM tasks ORDER BY created_at DESC LIMIT 200").fetchall()
+            # Compute per-model queue positions (1-based, FIFO among queued)
+            queued_rows = con.execute(
+                "SELECT id, model FROM tasks WHERE status='queued' ORDER BY created_at ASC"
+            ).fetchall()
             con.close()
-            return self._send(200, json.dumps({"tasks": [task_json(r) for r in rows]}))
+            # Build {task_id: position} map
+            model_counters = {}
+            queue_positions = {}
+            for qr in queued_rows:
+                m = qr["model"]
+                model_counters[m] = model_counters.get(m, 0) + 1
+                queue_positions[qr["id"]] = model_counters[m]
+            return self._send(200, json.dumps(
+                {"tasks": [task_json(r, queue_positions) for r in rows]}))
+
+        if rest == "api/limits":
+            data_path = os.path.join(DATA_DIR, "data.json")
+            try:
+                with open(data_path) as fh:
+                    data = json.load(fh)
+                return self._send(200, json.dumps(data))
+            except Exception:
+                return self._send(200, json.dumps({"providers": [], "generated_at": None}))
+
         if rest == "api/sessions":
             return self._send(200, json.dumps({
                 "sessions": all_sessions(),
@@ -868,6 +1001,7 @@ class Handler(BaseHTTPRequestHandler):
                 "supabase_url": get_setting("supabase_url", ""),
                 "has_key": bool(get_setting("supabase_key")),
                 "workdir": get_setting("workdir", HOME),
+                "queue_min_remaining": float(get_setting("queue_min_remaining") or "10.0"),
             }))
         if rest.startswith("api/tasks/"):
             tid = rest.split("/")[2]
@@ -927,6 +1061,13 @@ class Handler(BaseHTTPRequestHandler):
                         "supabase_owner", "workdir"):
                 if key in body:
                     set_setting(key, (body.get(key) or "").strip())
+            # Support queue_min_remaining setting
+            if "queue_min_remaining" in body:
+                try:
+                    val = float(body["queue_min_remaining"])
+                    set_setting("queue_min_remaining", str(val))
+                except Exception:
+                    pass
             return self._send(200, json.dumps({"ok": True}))
 
         if rest == "api/open":

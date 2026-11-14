@@ -28,13 +28,15 @@
 
   <div class="viewRow">
     <div class="views" role="tablist">
-      <button class="view" data-tab="tasks" aria-selected="true">Tasks</button>
+      <button class="view" data-tab="dashboard" aria-selected="true">Dashboard</button>
+      <button class="view" data-tab="tasks" aria-selected="false">Tasks</button>
       <button class="view" data-tab="sessions" aria-selected="false">Chats</button>
     </div>
     <span class="viewCount" id="viewCount"></span>
   </div>
 
-  <main id="list" class="list"></main>
+  <main id="dashboard" class="list"></main>
+  <main id="list" class="list" hidden></main>
   <main id="sessions" class="list" hidden></main>
 </div>
 
@@ -58,13 +60,16 @@
     <label>Working directory
       <input id="workdir" placeholder="/Users/you/project">
     </label>
+    <label>Queue threshold (% min remaining credits to run)
+      <input id="queueThreshold" type="number" min="0" max="90" placeholder="10">
+    </label>
     <label>Supabase URL
       <input id="sbUrl" placeholder="https://xxxx.supabase.co">
     </label>
     <label>Supabase anon key
       <input id="sbKey" placeholder="eyJhbGciOi…" type="password">
     </label>
-    <p class="hint">Create a <code>tasks</code> table with the SQL in <code>supabase.sql</code>. Leave blank to stay local-only.</p>
+    <p class="hint">Tasks will queue and wait until credits are available above the threshold. Create a <code>tasks</code> table with the SQL in <code>supabase.sql</code>.</p>
     <button id="saveSettings" class="primary">Save</button>
     <p id="saveState" class="hint"></p>
   </div>
